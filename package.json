@@ -1,0 +1,42 @@
+{
+  "name": "prima-dau-anomaly",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Prima — an agentic DAU/WAU anomaly detection & forecasting platform (LangGraph + Next.js)",
+  "type": "module",
+  "scripts": {
+    "seed": "tsx data/seed.ts",
+    "seed:github": "tsx data/seed-github.ts",
+    "eval": "PRIMA_DB_PATH=data/eval-synthetic.db node --env-file-if-exists=.env --import tsx src/eval/runEval.ts",
+    "bench:detectors": "tsx src/eval/benchmarkDetectors.ts",
+    "ml": "ml-service/run.sh",
+    "dev": "next dev",
+    "build": "next build --webpack",
+    "start": "next start",
+    "lint": "eslint"
+  },
+  "engines": {
+    "node": ">=20.9.0"
+  },
+  "dependencies": {
+    "@anthropic-ai/sdk": "^0.65.0",
+    "@langchain/anthropic": "^0.3.11",
+    "@langchain/core": "^0.3.40",
+    "@langchain/langgraph": "^0.2.44",
+    "better-sqlite3": "^11.8.1",
+    "next": "^16.2.7",
+    "react": "^19.2.0",
+    "react-dom": "^19.2.0",
+    "recharts": "^2.15.0"
+  },
+  "devDependencies": {
+    "@types/better-sqlite3": "^7.6.12",
+    "@types/node": "^22.10.7",
+    "@types/react": "^19.2.0",
+    "@types/react-dom": "^19.2.0",
+    "eslint": "^9.18.0",
+    "eslint-config-next": "^16.2.7",
+    "tsx": "^4.19.2",
+    "typescript": "^5.7.3"
+  }
+}

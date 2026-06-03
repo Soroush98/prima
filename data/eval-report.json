@@ -1,0 +1,226 @@
+{
+  "generatedAt": "2026-06-02T06:39:49.670Z",
+  "llmMode": "live",
+  "cases": [
+    {
+      "id": "global-dau-health",
+      "question": "Give me a health check on global DAU.",
+      "passed": true,
+      "checks": [
+        {
+          "name": "routing",
+          "passed": true,
+          "detail": "metric=DAU scope={}"
+        },
+        {
+          "name": "sql_valid",
+          "passed": true,
+          "detail": "read-only"
+        },
+        {
+          "name": "sql_executes",
+          "passed": true,
+          "detail": "180 rows"
+        },
+        {
+          "name": "anomaly_recall",
+          "passed": true,
+          "detail": "3 anomalies"
+        },
+        {
+          "name": "no_hallucination",
+          "passed": true,
+          "detail": "referenced EU,mobile,APAC,web"
+        }
+      ],
+      "metrics": {
+        "routingCorrect": true,
+        "sqlValid": true,
+        "sqlExecutes": true,
+        "anomalyRecall": true,
+        "rootCauseCorrect": null,
+        "hallucinationFree": true,
+        "latencyMs": 24300.4,
+        "costUsd": 0.017427,
+        "tokensIn": 1289,
+        "tokensOut": 904
+      }
+    },
+    {
+      "id": "eu-mobile-drop",
+      "question": "Why did DAU drop for EU mobile users?",
+      "passed": true,
+      "checks": [
+        {
+          "name": "routing",
+          "passed": true,
+          "detail": "metric=DAU scope={\"region\":\"EU\",\"platform\":\"mobile\"}"
+        },
+        {
+          "name": "sql_valid",
+          "passed": true,
+          "detail": "read-only"
+        },
+        {
+          "name": "sql_executes",
+          "passed": true,
+          "detail": "180 rows"
+        },
+        {
+          "name": "anomaly_recall",
+          "passed": true,
+          "detail": "3 anomalies"
+        },
+        {
+          "name": "root_cause",
+          "passed": true,
+          "detail": "v4.2.0"
+        },
+        {
+          "name": "no_hallucination",
+          "passed": true,
+          "detail": "referenced EU,mobile,desktop,web"
+        }
+      ],
+      "metrics": {
+        "routingCorrect": true,
+        "sqlValid": true,
+        "sqlExecutes": true,
+        "anomalyRecall": true,
+        "rootCauseCorrect": true,
+        "hallucinationFree": true,
+        "latencyMs": 33469.9,
+        "costUsd": 0.023028,
+        "tokensIn": 1286,
+        "tokensOut": 1278
+      }
+    },
+    {
+      "id": "wau-trend",
+      "question": "What is the WAU trend and 14-day forecast?",
+      "passed": true,
+      "checks": [
+        {
+          "name": "routing",
+          "passed": true,
+          "detail": "metric=WAU scope={}"
+        },
+        {
+          "name": "sql_valid",
+          "passed": true,
+          "detail": "read-only"
+        },
+        {
+          "name": "sql_executes",
+          "passed": true,
+          "detail": "194 rows"
+        },
+        {
+          "name": "no_hallucination",
+          "passed": true,
+          "detail": "no entities referenced"
+        }
+      ],
+      "metrics": {
+        "routingCorrect": true,
+        "sqlValid": true,
+        "sqlExecutes": true,
+        "anomalyRecall": true,
+        "rootCauseCorrect": null,
+        "hallucinationFree": true,
+        "latencyMs": 23993.2,
+        "costUsd": 0.016035,
+        "tokensIn": 415,
+        "tokensOut": 986
+      }
+    },
+    {
+      "id": "ai-assistant-usage",
+      "question": "How is ai_assistant feature usage trending?",
+      "passed": true,
+      "checks": [
+        {
+          "name": "routing",
+          "passed": true,
+          "detail": "metric=DAU scope={\"feature\":\"ai_assistant\"}"
+        },
+        {
+          "name": "sql_valid",
+          "passed": true,
+          "detail": "read-only"
+        },
+        {
+          "name": "sql_executes",
+          "passed": true,
+          "detail": "180 rows"
+        },
+        {
+          "name": "no_hallucination",
+          "passed": true,
+          "detail": "no entities referenced"
+        }
+      ],
+      "metrics": {
+        "routingCorrect": true,
+        "sqlValid": true,
+        "sqlExecutes": true,
+        "anomalyRecall": true,
+        "rootCauseCorrect": null,
+        "hallucinationFree": true,
+        "latencyMs": 11589.7,
+        "costUsd": 0.00672,
+        "tokensIn": 415,
+        "tokensOut": 365
+      }
+    },
+    {
+      "id": "export-decay",
+      "question": "Is the export feature losing users?",
+      "passed": true,
+      "checks": [
+        {
+          "name": "routing",
+          "passed": true,
+          "detail": "metric=DAU scope={\"feature\":\"export\"}"
+        },
+        {
+          "name": "sql_valid",
+          "passed": true,
+          "detail": "read-only"
+        },
+        {
+          "name": "sql_executes",
+          "passed": true,
+          "detail": "180 rows"
+        },
+        {
+          "name": "no_hallucination",
+          "passed": true,
+          "detail": "referenced APAC,desktop,web,EU,mobile"
+        }
+      ],
+      "metrics": {
+        "routingCorrect": true,
+        "sqlValid": true,
+        "sqlExecutes": true,
+        "anomalyRecall": true,
+        "rootCauseCorrect": null,
+        "hallucinationFree": true,
+        "latencyMs": 26758.7,
+        "costUsd": 0.015276,
+        "tokensIn": 1272,
+        "tokensOut": 764
+      }
+    }
+  ],
+  "aggregate": {
+    "passRate": 100,
+    "routingAccuracy": 100,
+    "sqlValidity": 100,
+    "anomalyRecall": 100,
+    "hallucinationRate": 0,
+    "avgLatencyMs": 24022.4,
+    "totalCostUsd": 0.078486,
+    "p95LatencyMs": 33469.9
+  }
+}

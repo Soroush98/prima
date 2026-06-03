@@ -1,0 +1,27 @@
+# deps & build output (reinstalled / regenerated in the image)
+node_modules
+.next
+tsconfig.tsbuildinfo
+
+# secrets — provided at runtime via `fly secrets set`
+.env
+.env.*
+!.env.example
+
+# data artifacts — DB is rebuilt on the Fly volume on first request
+data/*.db
+data/*.db-*
+data/*.db.building
+data/online-retail.csv
+data/eval-*.db
+
+# python service (deployed as its own Fly app from ml-service/)
+ml-service/.venv
+ml-service/__pycache__
+**/__pycache__
+
+# misc
+.git
+.gitignore
+npm-debug.log*
+*.log

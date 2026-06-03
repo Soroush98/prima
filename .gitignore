@@ -1,0 +1,11 @@
+node_modules
+.next
+out
+.env
+.env.local
+*.db
+*.db-journal
+*.tsbuildinfo
+next-env.d.ts
+data/online-retail.csv
+ml-service/.venv/

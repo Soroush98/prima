@@ -1,0 +1,68 @@
+name: CI & Deploy to Fly.io
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+# Never run two deploys of the same ref at once.
+concurrency:
+  group: deploy-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  # ---- Gate: lint, typecheck, and a real production build must pass ----
+  verify:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - run: npm run lint
+      - run: npx tsc --noEmit
+      - run: npm run build
+
+  # ---- Which parts changed? (skip the slow PyTorch deploy when only web changed) ----
+  changes:
+    needs: verify
+    if: github.event_name == 'push'
+    runs-on: ubuntu-latest
+    outputs:
+      ml: ${{ steps.filter.outputs.ml }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dorny/paths-filter@v3
+        id: filter
+        with:
+          filters: |
+            ml:
+              - 'ml-service/**'
+
+  # ---- Web app (deployed on every push to main) ----
+  deploy-web:
+    needs: verify
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: superfly/flyctl-actions/setup-flyctl@master
+      - run: flyctl deploy --remote-only
+        env:
+          FLY_API_TOKEN: ${{ secrets.FLY_API_TOKEN }}
+
+  # ---- ML ensemble (only when ml-service/** changed) ----
+  deploy-ml:
+    needs: changes
+    if: needs.changes.outputs.ml == 'true'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: superfly/flyctl-actions/setup-flyctl@master
+      - run: flyctl deploy --remote-only
+        working-directory: ml-service
+        env:
+          FLY_API_TOKEN: ${{ secrets.FLY_API_TOKEN }}

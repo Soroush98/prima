@@ -1,0 +1,32 @@
+# Prima web app (Next.js + LangGraph). Deploy from the repo root.
+# Talks to the ML ensemble over Fly's private network: prima-ml.internal:8000
+app = "prima-web"
+primary_region = "yyz"
+
+[build]
+
+[env]
+  PORT = "3000"
+  # SQLite warehouse persists on the mounted volume → no re-download on restart.
+  PRIMA_DB_PATH = "/data/prima.db"
+  PRIMA_MODEL = "claude-sonnet-4-6"
+  # PyTorch ensemble (separate Fly app). Web degrades to the statistical detector if it's down.
+  ML_SERVICE_URL = "http://prima-ml.internal:8000"
+  # ANTHROPIC_API_KEY is set via `fly secrets set` — never put it here.
+
+[http_service]
+  internal_port = 3000
+  force_https = true
+  auto_stop_machines = "stop"
+  auto_start_machines = true
+  # Keep 0 to scale-to-zero (cheapest). The DB persists on the volume, so only the
+  # very first request ever pays the dataset-build cost. Set to 1 to avoid cold starts.
+  min_machines_running = 0
+
+[[mounts]]
+  source = "prima_data"
+  destination = "/data"
+
+[[vm]]
+  size = "shared-cpu-1x"
+  memory = "1024mb"
