@@ -16,7 +16,7 @@ PyTorch** service hosts a **Donut-VAE** anomaly detector that the agents call ov
 
 ---
 
-## What this demonstrates
+## What this shows
 
 A full, end-to-end take on an enterprise analytical agent ecosystem, and where each
 capability lives in the code:
@@ -207,8 +207,8 @@ meant to expose.
 
 ## The evaluation harness
 
-The piece most GenAI demos skip. `npm run eval` runs a golden set of questions through
-the live agent graph and scores each on:
+`npm run eval` runs a golden set of questions through the live agent graph and scores
+each on:
 
 - **Routing accuracy**: did the orchestrator resolve the right metric and scope?
 - **SQL validity & execution**: does the generated SQL pass the read-only guard and return rows?
@@ -219,8 +219,9 @@ the live agent graph and scores each on:
 
 Results are written to `data/eval-report.json` and shown on the dashboard.
 
-Latest local run (live Claude): **100% pass, 100% routing, 100% SQL validity, 100%
-anomaly recall, 0% hallucination.**
+Latest local run (live Claude, 5-case golden set): **100% pass, 100% routing, 100% SQL
+validity, 100% anomaly recall, 0% hallucination.** The set is small and meant to grow —
+it covers the core routing/SQL/anomaly/root-cause paths rather than exhaustive coverage.
 
 ---
 
@@ -290,6 +291,6 @@ src/
 
 ## Notes & honest limitations
 
-- The SQLite warehouse stands in for BigQuery to keep the demo free and offline. The SQL surface (CTEs, window functions, `COUNT DISTINCT`) maps directly.
+- The SQLite warehouse stands in for BigQuery to keep the project free and offline. The SQL surface (CTEs, window functions, `COUNT DISTINCT`) maps directly.
 - Forecasting uses the zero-shot **Chronos-Bolt** foundation model when the ML service is up, with Holt-Winters as a transparent fallback that has no dependencies. The choice is deliberate: foundation models are strong for zero-shot and cold-start, while the `forecaster` node stays a clean seam (you can swap in Prophet, NeuralProphet, or Vertex just as easily).
 - Clean separation of concerns: the SQL authoring and the narrative come from a live Claude model, while the numeric results (anomalies, forecast, segment attribution) are computed in plain code, so the figures never depend on the LLM.
