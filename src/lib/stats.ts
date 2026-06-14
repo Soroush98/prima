@@ -21,10 +21,6 @@ export interface Anomaly {
   deviationPct: number;
   direction: "drop" | "spike";
   severity: "low" | "medium" | "high";
-  /** which detector(s) flagged this point — set by the ensemble in the agent node */
-  detectors?: ("statistical" | "vae")[];
-  /** ensemble confidence = fraction of detectors that agreed (0–1) */
-  confidence?: number;
 }
 
 export interface ForecastPoint {

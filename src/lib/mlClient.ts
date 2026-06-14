@@ -42,7 +42,7 @@ export async function detectAnomaliesML(
         series,
         model: opts.model ?? "vae",
         threshold: opts.threshold ?? "evt",
-        window: opts.window ?? 14,
+        window: opts.window ?? 28, // ~4 weekly cycles — see benchmark window sweep
         q: opts.q ?? 0.02,
         epochs: opts.epochs ?? 150,
       }),

@@ -12,7 +12,7 @@
 const NODES = [
   { id: "orchestrator", label: "orchestrator", sub: "parse metric + scope", kind: "code" },
   { id: "sql_analyst", label: "sql_analyst", sub: "LLM → SQL → guard → run", kind: "llm" },
-  { id: "anomaly_detector", label: "anomaly_detector", sub: "z-score ⊕ Donut-VAE", kind: "compute" },
+  { id: "anomaly_detector", label: "anomaly_detector", sub: "seasonal z-score (EVT/POT)", kind: "compute" },
   { id: "forecaster", label: "forecaster", sub: "Chronos-Bolt / Holt-Winters", kind: "compute" },
   { id: "root_cause", label: "root_cause", sub: "LLM hypotheses + deploy join", kind: "llm" },
   { id: "narrator", label: "narrator", sub: "LLM executive briefing", kind: "llm" },

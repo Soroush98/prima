@@ -1,7 +1,7 @@
 import { safeQuery, guardReadOnlySql, getDimensionVocab } from "@/lib/db";
 import { callLLM, estimateCostUsd } from "@/lib/llm";
 import { detectAnomalies, forecast as runForecast, trendSlopePct, type Point } from "@/lib/stats";
-import { detectAnomaliesML, forecastTSFM } from "@/lib/mlClient";
+import { forecastTSFM } from "@/lib/mlClient";
 import type { PrimaStateType } from "./state";
 import type { RootCause, TraceEntry } from "./types";
 import { buildMetricSql, filterLabel, parseIntent, SCHEMA_DOC } from "./util";
@@ -79,50 +79,26 @@ export async function sqlAnalyst(state: PrimaStateType): Promise<Update> {
 }
 
 /* ------------------------------------------------------------------ */
-/* 3. Anomaly Detector — ENSEMBLE: statistical baseline + Donut-VAE     */
+/* 3. Anomaly Detector — seasonal-naive z-score with EVT/POT threshold  */
 /* ------------------------------------------------------------------ */
 export async function anomalyDetector(state: PrimaStateType): Promise<Update> {
   const start = performance.now();
 
-  // (a) statistical detector — robust seasonal-naive z-score with a
-  //     self-calibrating EVT/POT threshold (SPOT), always available.
+  // Robust seasonal-naive z-score with a self-calibrating EVT/POT threshold
+  // (SPOT). For Prima's single daily KPI this matches or beats the deep Donut
+  // detector (see ml-service benchmarks), so the agent runs statistical-only —
+  // no ensemble, no agreement vote. The Donut VAE remains as a benchmark.
   const anomalies = detectAnomalies(state.series, { method: "evt" });
 
-  // (b) deep detector served by the Python ml-service: a Donut-style VAE.
-  //     Augments the baseline; the graph proceeds statistical-only if the
-  //     service is offline.
-  const vae = await detectAnomaliesML(state.series, { model: "vae" });
-  const vaeDates = new Set((vae?.anomalies ?? []).map((a) => a.date));
-  const available = 1 + (vae ? 1 : 0);
-
-  // (c) fuse: each anomaly's confidence = fraction of available detectors agreeing.
-  let confirmed = 0;
-  for (const a of anomalies) {
-    const detectors: ("statistical" | "vae")[] = ["statistical"];
-    if (vaeDates.has(a.date)) detectors.push("vae");
-    a.detectors = detectors;
-    a.confidence = +(detectors.length / available).toFixed(2);
-    if (detectors.length >= 2) confirmed++;
-  }
-
   const worst = [...anomalies].sort((x, y) => Math.abs(y.zscore) - Math.abs(x.zscore))[0];
-  const mlDetail = available > 1
-    ? ` Deep detector [VAE ${vae!.anomalies.length}]; ${confirmed} multi-detector confirmed (EVT-thresholded).`
-    : " Deep detector offline — statistical only.";
   const trace: TraceEntry = {
     agent: "anomaly_detector",
     status: anomalies.length ? "warn" : "ok",
     ms: +(performance.now() - start).toFixed(1),
-    detail:
-      (anomalies.length
-        ? `Statistical (EVT) flagged ${anomalies.length}; worst ${worst.direction} ${worst.deviationPct}% on ${worst.date} (z=${worst.zscore}).`
-        : "No statistically significant anomalies detected.") + mlDetail,
-    data: {
-      count: anomalies.length,
-      vaeCount: vae?.anomalies.length ?? null,
-      confirmed,
-      detectorsAvailable: available,
-    },
+    detail: anomalies.length
+      ? `EVT flagged ${anomalies.length}; worst ${worst.direction} ${worst.deviationPct}% on ${worst.date} (z=${worst.zscore}).`
+      : "No statistically significant anomalies detected.",
+    data: { count: anomalies.length },
   };
   return { anomalies, trace: [trace] };
 }

@@ -8,7 +8,8 @@ LLM evaluation scorecard.
 
 It runs on **Node 24 + Next.js 16 (App Router) + TypeScript**. The agent graph is built
 with **LangGraph.js**, **Claude** is the reasoning engine, and a **Python / FastAPI +
-PyTorch** service hosts a **Donut-VAE** anomaly detector that the agents call over HTTP.
+PyTorch** service provides zero-shot **Chronos-Bolt** forecasting and a benchmarked
+**Donut VAE** anomaly detector.
 
 > **Live Claude only.** The SQL-Analyst, Root-Cause, and Narrator agents call a real
 > Claude model, so you need an `ANTHROPIC_API_KEY` (`cp .env.example .env`). The
@@ -31,7 +32,7 @@ capability lives in the code:
 | **Prompt analysis metrics & LLM performance evaluation** | Golden-set eval harness: routing, SQL validity, recall, hallucination, latency, cost ([src/eval/](src/eval/)) |
 | **Observability dashboards** (feature usage, perf, agent health) | Next.js dashboard with live agent trace ([src/app/page.tsx](src/app/page.tsx)) |
 | **Statistical modeling for predictive analytics** (preferred) | Seasonal-trend decomposition, robust MAD z-scores, Holt-Winters ([src/lib/stats.ts](src/lib/stats.ts)) |
-| **Deep learning** (PyTorch) | Donut-VAE anomaly detector in a FastAPI microservice, ensembled with the statistical detector ([ml-service/](ml-service/)) |
+| **Deep learning** (PyTorch) | Faithful **Donut** VAE (WWW'18) in a FastAPI microservice — benchmarked against the statistical detector on synthetic + real AIOps KPIs ([ml-service/README.md](ml-service/README.md)) |
 | **GCP / BigQuery** style SQL (preferred) | SQLite warehouse with the same SQL surface (CTEs, window fns, `COUNT DISTINCT`) |
 | **Technical writing / documentation** | This README + heavily documented modules |
 
@@ -62,7 +63,7 @@ capability lives in the code:
 
 1. **Orchestrator** parses the natural-language question into a metric (DAU/WAU) and a dimensional scope (region / platform / feature).
 2. **SQL Analyst** writes a read-only SQL query for the metric, **guards** it (single SELECT/WITH, no DDL/DML), executes it, and returns the time series. If generation fails it falls back to a validated template.
-3. **Anomaly Detector** is an **ensemble**: a statistical **seasonal-naive week-over-week** z-score (robust median/MAD) combined with a **PyTorch Donut-VAE** served from the Python microservice. When both agree, the anomaly is marked high-confidence. See [Deep-learning detector & ensemble](#deep-learning-detector--ensemble-pytorch).
+3. **Anomaly Detector** runs a statistical **seasonal-naive week-over-week** z-score (robust median/MAD) with a self-calibrating **EVT/POT (SPOT)** threshold. Benchmarks showed the Donut VAE ensemble adds nothing for Prima's single clean daily KPI — and the "agreement" vote actively hurt — so the agent is **statistical-only**; the deep model is kept as a benchmarked reference. See [Deep-learning detector](#deep-learning-detector-pytorch-benchmarked).
 4. **Forecaster** uses zero-shot **Chronos-Bolt** (a pretrained time-series foundation model from Amazon) to forecast 14 days with probabilistic quantile bands, with *no training on our data*. It falls back to a hand-written Holt-Winters model when the ML service is offline. See [ml-service/forecaster.py](ml-service/forecaster.py).
 5. **Root-Cause** lines up the worst drop against the `deploys` table and the worst-hit `region / platform` segments (week over week), then forms hypotheses grounded in that evidence.
 6. **Narrator** writes a short executive briefing with a recommendation.
@@ -91,10 +92,10 @@ GitHub and builds it (about 1 to 8 seconds, then cached), see
 > Port 3000 busy? `PORT=3100 npm run dev`. Requires `ANTHROPIC_API_KEY`:
 > `cp .env.example .env` and add your key (the agents call Claude on every request).
 
-> **Optional: deep-learning detector.** Start the PyTorch service in a second
-> terminal (`npm run ml`) and the anomaly agent automatically ensembles it with the
-> statistical detector. If it's offline the graph runs statistical-only, so the ML
-> detector adds to the result but never blocks it.
+> **Optional: ML service.** Start the PyTorch service in a second terminal
+> (`npm run ml`) to enable zero-shot **Chronos-Bolt** forecasting — the `forecaster`
+> falls back to Holt-Winters when it's offline. The service also hosts the benchmarked
+> **Donut** detector (`npm run bench:detectors`); it is not in the live anomaly path.
 
 ### The data: real DAU, computed live
 
@@ -151,57 +152,35 @@ A `deploys` table provides the release events the Root-Cause agent correlates ag
 
 ---
 
-## Deep-learning detector & ensemble (PyTorch)
+## Deep-learning detector (PyTorch, benchmarked)
 
-Anomaly detection runs as a **two-detector ensemble**, each scored continuously and
-thresholded with **EVT/POT (SPOT)**, a self-calibrating threshold instead of a
-hand-picked `k`:
+The Python service hosts a **faithful port of Donut** (Xu et al., WWW'18) — a
+variational autoencoder for seasonal KPIs with the paper's three techniques: a
+**Gaussian decoder**, **M-ELBO + missing-data injection**, and **MCMC imputation**.
+Both detectors are thresholded with **EVT/POT (SPOT)** ([src/lib/evt.ts](src/lib/evt.ts)),
+which fits a Generalized Pareto Distribution to the score *tail* for a target
+false-alarm rate `q` — one interpretable risk knob instead of a hand-picked `k`
+(Siffer et al., KDD 2017).
 
-1. **Statistical** ([src/lib/stats.ts](src/lib/stats.ts)): robust seasonal-naive week-over-week z-score. Explainable, no dependencies, always on.
-2. **Donut-style VAE** ([ml-service/](ml-service/)): a variational autoencoder for seasonal KPIs (tight bottleneck plus missing-data-injection denoising), the better-matched deep model for this kind of signal.
+**It is not in the live agent path** — two benchmarks make the case for why:
 
-**EVT/POT thresholding** ([src/lib/evt.ts](src/lib/evt.ts)) fits a Generalized Pareto
-Distribution to the *tail* of the score distribution and derives the cutoff for a target
-false-alarm rate `q`. A noisy metric gets a higher bar and a clean one a lower bar, all
-from one interpretable risk knob (Siffer et al., KDD 2017).
+- **Synthetic Prima** (one clean daily KPI, `npm run bench:detectors`): the statistical
+  seasonal z-score matches or beats Donut (AUC-PR 1.00 vs 1.00 on large anomalies; 0.95
+  vs 0.84 on subtle). The ensemble adds nothing, and the "agreement = confirmed" vote
+  was the *worst* performer. So the agent runs **statistical-only**.
+- **Real AIOps KPIs** (26 heterogeneous web-service KPIs, `bench_aiops.py`): here Donut
+  *wins* — point-adjusted best-F1 **0.91 vs 0.54**, landing in the paper's reported
+  0.75–0.90 range. You can't hand-tune one seasonal period across 26 KPIs of different
+  sampling rates and shapes; Donut learns each.
 
-The LangGraph `anomaly_detector` node calls the Python service for the deep model,
-combines both detectors, and tags each anomaly with the detectors that agreed plus a
-**confidence = fraction of detectors in agreement**. The dashboard shows a `conf N% · vae`
-badge.
+The deep model earns its keep on **many heterogeneous, high-frequency KPIs**, not on
+Prima's single clean daily series. The full tables, dataset plots, window sweep, and the
+metric caveats (why point-adjusted best-F1 ≫ strict AUC-PR) live in
+**[ml-service/README.md](ml-service/README.md)**.
 
-### Benchmark: `npm run bench:detectors`
-
-A controlled experiment, **averaged over 12 independent seeds** (mean ± std), on
-synthetic series with **known injected anomalies** (labels by construction). To keep the
-numbers honest, the generator is made harder than the detectors' own assumptions:
-**AR(1)-autocorrelated, Laplace (heavy-tailed) noise**, about 7% contamination, and a mix
-of **point, short-collective, and 5-day level-shift (regime)** anomalies. Scored with the
-**TSB-AD threshold-free metrics**, **VUS-PR** and **AUC-PR** (robust to temporal offset;
-the point-adjusted F1 that flattered older leaderboards was [shown unreliable at NeurIPS
-2024](https://openreview.net/forum?id=R6kJtWsTGy)), plus point-F1 for contrast:
-
-| Detector | VUS-PR | AUC-PR | point-F1 |
-|---|---|---|---|
-| statistical (EVT) | 0.67 ± 0.02 | **1.00 ± 0.00** | 0.36 ± 0.06 |
-| donut_vae | 0.50 ± 0.05 | 0.53 ± 0.11 | 0.42 ± 0.10 |
-| **ensemble (mean score)** | **0.68 ± 0.02** | **1.00 ± 0.00** | n/a |
-| └ union (≥1 vote) | n/a | n/a | **0.52 ± 0.09** |
-| └ intersect (≥2 votes) | n/a | n/a | 0.22 ± 0.13 |
-
-The combined ensemble score ranks anomalies almost perfectly (AUC-PR about 1.0) and is
-the steadiest ranker (tightest std). The single statistical detector is precision-first
-but misses on recall; the **union** op recovers it (best F1) while the **intersection**
-stays precision-tight. That's the quantified case for combining statistics with deep
-learning, and for picking the ensemble op by the cost of a miss versus a false alarm.
-Note the VAE's AUC-PR drops to about 0.53 under the harder noise (versus about 0.72 on a
-single easy seed), which is exactly the optimism the multi-seed, harder-noise setup is
-meant to expose.
-
-> The deep detector mirrors a production multi-task anomaly model deployed on IoT edge
-> devices: an unsupervised autoencoder behind its own inference API, used by the rest of
-> the system over the network. The metric and threshold choices (VUS-PR, EVT, Donut-VAE)
-> track the 2024-25 time-series anomaly-detection state of the art.
+> The deep detector mirrors a production unsupervised anomaly model behind its own
+> inference API. The metric and threshold choices (AUC-PR/VUS-PR, EVT, Donut) track the
+> 2024-25 time-series anomaly-detection state of the art.
 
 ---
 
@@ -230,7 +209,7 @@ it covers the core routing/SQL/anomaly/root-cause paths rather than exhaustive c
 Prima runs on **Fly.io** as two small apps in the same org:
 
 - **`prima-web`**: the Next.js app and agent fleet. It keeps the SQLite warehouse on a 1 GB volume, so the data survives restarts.
-- **`prima-ml`**: the FastAPI + PyTorch service. The web app reaches it over Fly's private network at `prima-ml.internal:8000`. If it's down, the web app drops back to the statistical detector and keeps working.
+- **`prima-ml`**: the FastAPI + PyTorch service (Chronos-Bolt forecaster + Donut benchmark). The web app reaches it over Fly's private network at `prima-ml.internal:8000`. If it's down, the `forecaster` drops back to Holt-Winters and the app keeps working (anomaly detection is statistical-only and doesn't depend on it).
 
 Both deploy to the Toronto region (`yyz`). The only required secret is
 `ANTHROPIC_API_KEY`, set with `fly secrets set`.
@@ -256,10 +235,12 @@ output it produces is what the Docker image runs.
 
 ```
 ml-service/          Python FastAPI + PyTorch microservice
-  model.py           Donut-style VAE
-  detector.py        train + recon-error scoring + EVT/POT threshold (cached)
+  model.py           Donut VAE (faithful WWW'18 port: Gaussian decoder)
+  detector.py        M-ELBO train + reconstruction-probability scoring + EVT/POT (cached)
   forecaster.py      zero-shot Chronos-Bolt foundation-model forecasting
   app.py             /detect, /forecast, /health
+  bench_aiops.py     z-score vs Donut on the real AIOps KPI dataset
+  plot_datasets.py   renders the dataset figures in ml-service/README
   run.sh             `npm run ml`: creates the uv venv and starts uvicorn
 data/
   seed.ts            synthetic telemetry generator (deterministic PRNG)
@@ -272,7 +253,7 @@ src/
     llm.ts           Claude provider (Anthropic SDK) + cost model
   agents/
     state.ts         LangGraph shared-state annotation
-    nodes.ts         the six agent nodes (anomaly_detector = 2-detector ensemble)
+    nodes.ts         the six agent nodes (anomaly_detector = seasonal z-score / EVT)
     graph.ts         StateGraph wiring + runPrima() entrypoint
     util.ts          intent parsing + SQL builder + schema doc
   eval/

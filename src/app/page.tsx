@@ -236,27 +236,14 @@ export default function Home() {
               {result.anomalies.length > 0 && (
                 <div style={{ marginTop: 12 }}>
                   <h3>Top anomalies</h3>
-                  {result.anomalies.slice(0, 5).map((a) => {
-                    const deep = (a.detectors ?? []).filter((d) => d !== "statistical");
-                    return (
-                      <div key={a.date} style={{ fontSize: 13, marginBottom: 4 }}>
-                        <span className={`tag ${a.severity}`}>{a.severity}</span>
-                        {a.date}: {a.direction} {a.deviationPct}% (z={a.zscore})
-                        {a.confidence !== undefined && (
-                          <span
-                            className={`tag ${a.confidence >= 0.66 ? "high" : "low"}`}
-                            style={{ marginLeft: 6 }}
-                            title={`Confirmed by: ${(a.detectors ?? []).join(", ")}`}
-                          >
-                            conf {Math.round(a.confidence * 100)}%
-                            {deep.length ? ` · ${deep.join("+")}` : ""}
-                          </span>
-                        )}
-                      </div>
-                    );
-                  })}
+                  {result.anomalies.slice(0, 5).map((a) => (
+                    <div key={a.date} style={{ fontSize: 13, marginBottom: 4 }}>
+                      <span className={`tag ${a.severity}`}>{a.severity}</span>
+                      {a.date}: {a.direction} {a.deviationPct}% (z={a.zscore})
+                    </div>
+                  ))}
                   <div className="muted" style={{ fontSize: 11, marginTop: 6 }}>
-                    Ensemble: statistical (EVT/POT) + Donut-VAE. Confidence = detectors in agreement.
+                    Seasonal-naive z-score with a self-calibrating EVT/POT threshold (SPOT).
                   </div>
                 </div>
               )}
