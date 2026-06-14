@@ -121,6 +121,16 @@ stack-specific skill for language idioms; the rules here are stack-agnostic.
 - **Conventional Commits** with scopes; focused, reviewable commits.
 - **Least-privilege CI:** minimal permissions, short-lived/OIDC credentials over
   static secrets, pinned actions, gated dependency auto-merge.
+- **Keep runner actions on a maintained runtime.** CI hosts deprecate the language
+  runtime that actions execute on (e.g. GitHub Actions retiring Node 20 for Node 24:
+  `actions/checkout@v4`/`setup-node@v4` → `@v5`). Treat deprecation warnings as
+  scheduled work, not noise — bump to the maintained major *before* the forced
+  cutoff turns a warning into a failed pipeline. Pin to a major you can still update.
+- **Authn must reach the tool, not just the workflow.** A deploy/publish step fails
+  with "no token / not logged in" when the secret never reaches the CLI. Set the
+  credential at job-level `env` (so both the setup action and the command see it),
+  and add a preflight that fails fast with an actionable message when it's missing —
+  better than a downstream tool's cryptic auth error.
 - **Changelog as fragments** built at release time, not hand-edited. Semantic
   versioning.
 - **Containers:** multi-stage builds, minimal/non-root runtime images.
