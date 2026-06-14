@@ -47,22 +47,36 @@ jobs:
     needs: verify
     if: github.event_name == 'push' && github.ref == 'refs/heads/main'
     runs-on: ubuntu-latest
+    # Job-level env so both setup-flyctl and the deploy step see the token.
+    env:
+      FLY_API_TOKEN: ${{ secrets.FLY_API_TOKEN }}
     steps:
+      - name: Check FLY_API_TOKEN is set
+        run: |
+          if [ -z "$FLY_API_TOKEN" ]; then
+            echo "::error::FLY_API_TOKEN secret is missing. Create one with 'fly tokens create deploy -x 999999h' and add it with 'gh secret set FLY_API_TOKEN'."
+            exit 1
+          fi
       - uses: actions/checkout@v4
       - uses: superfly/flyctl-actions/setup-flyctl@master
       - run: flyctl deploy --remote-only
-        env:
-          FLY_API_TOKEN: ${{ secrets.FLY_API_TOKEN }}
 
   # ---- ML ensemble (only when ml-service/** changed) ----
   deploy-ml:
     needs: changes
     if: needs.changes.outputs.ml == 'true'
     runs-on: ubuntu-latest
+    # Job-level env so both setup-flyctl and the deploy step see the token.
+    env:
+      FLY_API_TOKEN: ${{ secrets.FLY_API_TOKEN }}
     steps:
+      - name: Check FLY_API_TOKEN is set
+        run: |
+          if [ -z "$FLY_API_TOKEN" ]; then
+            echo "::error::FLY_API_TOKEN secret is missing. Create one with 'fly tokens create deploy -x 999999h' and add it with 'gh secret set FLY_API_TOKEN'."
+            exit 1
+          fi
       - uses: actions/checkout@v4
       - uses: superfly/flyctl-actions/setup-flyctl@master
       - run: flyctl deploy --remote-only
         working-directory: ml-service
-        env:
-          FLY_API_TOKEN: ${{ secrets.FLY_API_TOKEN }}

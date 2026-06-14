@@ -2,10 +2,10 @@
 
 Two Fly apps in the same org:
 
-| App        | What it is                          | Source dir   | Reached at                     |
-| ---------- | ----------------------------------- | ------------ | ------------------------------ |
-| `prima`    | Next.js + LangGraph agent fleet     | repo root    | public HTTPS URL               |
-| `prima-ml` | FastAPI + PyTorch (VAE + Chronos)   | `ml-service/`| `prima-ml.internal:8000` (private) |
+| App         | What it is                          | Source dir   | Reached at                     |
+| ----------- | ----------------------------------- | ------------ | ------------------------------ |
+| `prima-web` | Next.js + LangGraph agent fleet     | repo root    | public HTTPS URL               |
+| `prima-ml`  | FastAPI + PyTorch (VAE + Chronos)   | `ml-service/`| `prima-ml.internal:8000` (private) |
 
 The web app talks to the ML app over Fly's private 6PN network, so the ML service needs
 **no public traffic**. If `prima-ml` is down, the web app automatically falls back to the
@@ -33,11 +33,11 @@ fly deploy                   # builds the CPU-torch image (~a few minutes the fi
 > `ml-service/fly.toml` mapping it to `/app/.hfcache`. If you see OOM kills, bump
 > `memory` to `4096mb` in `ml-service/fly.toml` and `fly deploy` again.
 
-## 2. Deploy the web app (`prima`)
+## 2. Deploy the web app (`prima-web`)
 
 ```bash
 cd ..                                    # back to repo root
-fly apps create prima
+fly apps create prima-web
 
 # Persistent disk for the SQLite warehouse (must exist before the first deploy)
 fly volumes create prima_data --size 1 --region yyz
@@ -63,7 +63,7 @@ restart — reuses the persisted DB, so it's fast.
 - **Internal address:** the web app reads `ML_SERVICE_URL=http://prima-ml.internal:8000`
   (set in `fly.toml`). If you rename the ML app, update that value.
 - **Changing the model:** edit `PRIMA_MODEL` in `fly.toml` (e.g. `claude-opus-4-8`) and redeploy.
-- **Logs / status:** `fly logs -a prima`, `fly status -a prima` (same for `prima-ml`).
+- **Logs / status:** `fly logs -a prima-web`, `fly status -a prima-web` (same for `prima-ml`).
 - **Web only (skip ML):** you can deploy just step 2 — leave `prima-ml` undeployed and the
   graph runs with the statistical detector. The VAE/Chronos columns simply stay dark.
 

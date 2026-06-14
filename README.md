@@ -30,7 +30,7 @@ capability lives in the code:
 | Move beyond chat to **proactive, prescriptive** actions | `root_cause` + `narrator` agents emit diagnosis + recommendations ([src/agents/nodes.ts](src/agents/nodes.ts)) |
 | **Predictive / prescriptive** analytics (vs legacy PowerBI) | Zero-shot **Chronos-Bolt** foundation-model forecasting (Holt-Winters fallback) + prescriptive narration ([ml-service/forecaster.py](ml-service/forecaster.py)) |
 | **Prompt analysis metrics & LLM performance evaluation** | Golden-set eval harness: routing, SQL validity, recall, hallucination, latency, cost ([src/eval/](src/eval/)) |
-| **Observability dashboards** (feature usage, perf, agent health) | Next.js dashboard with live agent trace ([src/app/page.tsx](src/app/page.tsx)) |
+| **Observability dashboards** (feature usage, perf, agent health) | Next.js dashboard with live agent trace + **dataset picker** ([src/app/page.tsx](src/app/page.tsx)) |
 | **Statistical modeling for predictive analytics** (preferred) | Seasonal-trend decomposition, robust MAD z-scores, Holt-Winters ([src/lib/stats.ts](src/lib/stats.ts)) |
 | **Deep learning** (PyTorch) | Faithful **Donut** VAE (WWW'18) in a FastAPI microservice — benchmarked against the statistical detector on synthetic + real AIOps KPIs ([ml-service/README.md](ml-service/README.md)) |
 | **GCP / BigQuery** style SQL (preferred) | SQLite warehouse with the same SQL surface (CTEs, window fns, `COUNT DISTINCT`) |
@@ -74,6 +74,19 @@ and adds up token/cost telemetry through LangGraph state reducers.
 The dashboard has two tabs: the live analysis view, and an **Architecture** tab that
 diagrams the LangGraph runtime and how a request flows through the model. It's there to
 walk someone through the internals.
+
+A **dataset picker** in the header switches the warehouse the agents run against, with
+the selection threaded per-request all the way to the SQL layer ([src/lib/datasetContext.ts](src/lib/datasetContext.ts)):
+
+| Dataset | Kind | What it is |
+| --- | --- | --- |
+| **Online Retail (real)** | agent | The auto-bootstrapped UCI dataset — genuine e-commerce DAU/WAU (default). |
+| **Synthetic storyline** | agent | Seeded telemetry with a known EU/mobile deploy incident — best for showing root-cause attribution. |
+| **AIOps KPI (real)** | viewer | 2018 AIOps Challenge web-service KPIs with ground-truth anomaly labels. Different shape (per-minute value/label, no users/deploys), so it's a **read-only viewer**, not analyzed by the agent. |
+
+The two *agent* datasets share the `user_activity` / `deploys` schema, so the full
+LangGraph fleet runs against either; each warehouse is built on demand the first time
+it's selected. The registry lives in [src/lib/datasets.ts](src/lib/datasets.ts).
 
 ---
 
@@ -247,10 +260,13 @@ data/
 src/
   lib/
     db.ts            SQLite connection + read-only SQL guard
+    datasets.ts      dataset registry (real / synthetic / aiops) + per-dataset warehouse
+    datasetContext.ts  per-request DB selection (AsyncLocalStorage) for the picker
     stats.ts         seasonal-naive scoring, EVT-thresholded detector, Holt-Winters
     evt.ts           EVT/POT (SPOT) self-calibrating threshold
     mlClient.ts      HTTP client for the PyTorch detectors (graceful if offline)
-    llm.ts           Claude provider (Anthropic SDK) + cost model
+    llm.ts           Claude provider (Anthropic SDK) + cost model + concurrency gate
+    rateLimit.ts     per-caller quota (token bucket) + global LLM concurrency semaphore
   agents/
     state.ts         LangGraph shared-state annotation
     nodes.ts         the six agent nodes (anomaly_detector = seasonal z-score / EVT)
@@ -263,9 +279,9 @@ src/
     metrics.ts       VUS-PR / AUC-PR / point-F1
     benchmarkDetectors.ts   statistical vs VAE vs ensemble
   app/
-    api/             /analyze, /feature-usage, /eval route handlers
-    page.tsx         observability dashboard (Dashboard + Architecture tabs)
-    components/      Recharts metric + feature-usage charts, Architecture diagrams
+    api/             /analyze, /feature-usage, /eval, /datasets, /kpi route handlers
+    page.tsx         observability dashboard (Dashboard + Architecture tabs, dataset picker)
+    components/      Recharts metric + feature-usage charts, KpiViewer, Architecture diagrams
 ```
 
 ---

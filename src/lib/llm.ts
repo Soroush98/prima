@@ -1,4 +1,5 @@
 import Anthropic from "@anthropic-ai/sdk";
+import { Semaphore } from "./rateLimit";
 
 /**
  * LLM access layer — live Claude only.
@@ -29,6 +30,14 @@ function getClient(): Anthropic {
 /** Hard deadline for a single Claude call; the agent graph awaits these serially. */
 const LLM_TIMEOUT_MS = 45_000;
 
+/**
+ * Global concurrency limiter: every model call passes through one shared gate, so
+ * total in-flight Claude calls stay bounded regardless of how many requests arrive
+ * at once (the nodes within a single request already run serially). Size it to your
+ * provider quota via PRIMA_LLM_CONCURRENCY.
+ */
+const llmGate = new Semaphore(Number(process.env.PRIMA_LLM_CONCURRENCY) || 4);
+
 export interface LLMResult {
   text: string;
   mode: "live";
@@ -43,13 +52,15 @@ const estTokens = (s: string) => Math.ceil(s.length / 4);
 /** Single-shot completion against a live Claude model. */
 export async function callLLM(system: string, user: string): Promise<LLMResult> {
   const start = performance.now();
-  const res = await getClient().messages.create({
-    model: MODEL,
-    max_tokens: 1024,
-    temperature: 0,
-    system,
-    messages: [{ role: "user", content: user }],
-  });
+  const res = await llmGate.run(() =>
+    getClient().messages.create({
+      model: MODEL,
+      max_tokens: 1024,
+      temperature: 0,
+      system,
+      messages: [{ role: "user", content: user }],
+    }),
+  );
   const text = res.content
     .filter((b): b is Anthropic.TextBlock => b.type === "text")
     .map((b) => b.text)
