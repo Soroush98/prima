@@ -11,6 +11,20 @@ import type { ForecastPoint, Point } from "@/lib/stats";
 
 const ML_URL = process.env.ML_SERVICE_URL || "http://127.0.0.1:8000";
 
+/**
+ * The ML service is optional, so an unreachable/timed-out service is expected
+ * and returns null silently. But a malformed response or a programming error
+ * is a real bug we must not hide — log those with context before degrading.
+ */
+function logUnexpected(op: string, err: unknown): void {
+  const expected =
+    err instanceof DOMException && (err.name === "AbortError" || err.name === "TimeoutError");
+  const isConnRefused = err instanceof TypeError; // fetch network error (service down)
+  if (!expected && !isConnRefused) {
+    console.warn(`[mlClient] ${op} failed unexpectedly:`, err);
+  }
+}
+
 export interface MlAnomaly {
   date: string;
   index: number;
@@ -70,8 +84,9 @@ export async function detectAnomaliesML(
       trainMs: data.train_ms ?? 0,
       finalLoss: data.final_loss ?? 0,
     };
-  } catch {
-    return null; // service down / unreachable
+  } catch (err) {
+    logUnexpected("detect", err);
+    return null; // service down / unreachable → fall back to the statistical detector
   }
 }
 
@@ -118,8 +133,9 @@ export async function forecastTSFM(series: Point[], horizon = 14): Promise<TsfmF
       upper: Math.round(data.upper?.[i] ?? m),
     }));
     return { points, model: data.model ?? "chronos-bolt", inferMs: data.infer_ms ?? 0 };
-  } catch {
-    return null;
+  } catch (err) {
+    logUnexpected("forecast", err);
+    return null; // service offline → caller falls back to Holt-Winters
   }
 }
 

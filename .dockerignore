@@ -14,6 +14,8 @@ data/*.db-*
 data/*.db.building
 data/online-retail.csv
 data/eval-*.db
+# 360MB raw AIOps dataset — only the small data/aiops-sample.json ships in the image
+data/aiops-kpi/
 
 # python service (deployed as its own Fly app from ml-service/)
 ml-service/.venv

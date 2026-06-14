@@ -178,19 +178,35 @@ ml-service/.venv/bin/python ml-service/bench_aiops.py   # N≤25000/KPI, W=120, 
 
 Each KPI is scored independently; the z-score's seasonal period is inferred
 per-KPI from the sampling interval (the "you must tune per series" step). Two
-metrics, macro-averaged over the 25 evaluable KPIs:
+metrics, macro-averaged over the evaluable KPIs (of the 26 loaded, KPIs whose
+post-warmup eval range contains no labelled anomaly are skipped — see
+`bench_aiops.py`, which prints the exact `n` averaged):
 
 | metric | z-score | Donut |
 |---|---|---|
 | **point-adjusted best-F1** (paper §4.2) | 0.541 | **0.910** |
 | strict point-wise AUC-PR | 0.184 | **0.194** |
 
+> **Methodology caveat (read before trusting the numbers).** Benchmark B is
+> **in-sample**: `donut_scores()` trains the VAE on the *whole* KPI series and
+> then scores the same points (only a leading `warmup` window is dropped, not a
+> held-out split), and the z-score's median/MAD is likewise fit over the full
+> series. So these are upper-bound, single-seed numbers, **not** a held-out
+> generalization estimate, and the best-F1 uses an oracle threshold. They show
+> the port *runs in Donut's native regime and ranks anomalies sensibly* — they do
+> **not** by themselves prove it matches the paper's held-out best-F1. A faithful
+> reproduction would split each KPI chronologically (fit on an earlier train
+> portion, score a disjoint later test portion) and pool over multiple seeds with
+> mean±std; that is tracked as a follow-up (see ../SKILLS_AUDIT.md).
+
 **Two takeaways:**
 
-1. **The implementation is validated.** In its native regime (W=120, minute data),
-   faithful Donut reaches **best-F1 0.910** — in/above the paper's reported **0.75–0.90**
-   range. The M-ELBO / Gaussian-decoder / reconstruction-probability port behaves as
-   the paper describes.
+1. **The port behaves like Donut in its native regime.** At W=120 on minute data,
+   faithful Donut reaches in-sample **best-F1 0.910**, overlapping the paper's
+   reported **0.75–0.90** range. The M-ELBO / Gaussian-decoder /
+   reconstruction-probability port behaves as the paper describes — but note this
+   is an in-sample number (see caveat above), so treat it as a sanity check on the
+   implementation, not as a held-out fidelity claim.
 2. **The regime flips the verdict.** On Benchmark A (one clean series) the z-score
    wins; on 26 heterogeneous real KPIs Donut wins — decisively on the paper's metric,
    narrowly on AUC-PR. You can't hand-tune one seasonal period across KPIs with

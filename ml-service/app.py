@@ -7,13 +7,17 @@ without coupling languages.
 """
 from __future__ import annotations
 
-from fastapi import FastAPI
+from typing import Any, Literal
+
+from fastapi import FastAPI, HTTPException
 from pydantic import BaseModel, Field
 
 from detector import detect
 from forecaster import forecast as tsfm_forecast
 
 app = FastAPI(title="Prima ML Service", version="1.1.0")
+
+MIN_POINTS = 8  # shortest series the forecaster/detector can do anything useful with
 
 
 class Point(BaseModel):
@@ -23,8 +27,8 @@ class Point(BaseModel):
 
 class DetectRequest(BaseModel):
     series: list[Point]
-    model: str = Field(default="vae")              # "vae"
-    threshold: str = Field(default="evt")          # "evt" (SPOT/POT) | "mad"
+    model: Literal["vae"] = "vae"
+    threshold: Literal["evt", "mad"] = "evt"        # "evt" (SPOT/POT) | "mad"
     window: int = Field(default=28, ge=3, le=60)  # ~4 weekly cycles; Donut uses 120 on long high-freq streams
     epochs: int = Field(default=150, ge=10, le=1000)
     k: float = Field(default=5.0, ge=1.0, le=10.0)
@@ -41,7 +45,7 @@ class ForecastRequest(BaseModel):
 
 
 @app.get("/health")
-def health():
+def health() -> dict[str, Any]:
     return {
         "status": "ok",
         "models": ["vae"],
@@ -51,15 +55,15 @@ def health():
 
 
 @app.post("/forecast")
-def forecast_endpoint(req: ForecastRequest):
+def forecast_endpoint(req: ForecastRequest) -> dict[str, Any]:
     values = [p.value for p in req.series]
-    if len(values) < 8:
-        return {"error": f"need at least 8 points, got {len(values)}"}
+    if len(values) < MIN_POINTS:
+        raise HTTPException(status_code=422, detail=f"need at least {MIN_POINTS} points, got {len(values)}")
     return tsfm_forecast(values, req.horizon)
 
 
 @app.post("/detect")
-def detect_endpoint(req: DetectRequest):
+def detect_endpoint(req: DetectRequest) -> dict[str, Any]:
     values = [p.value for p in req.series]
     dates = [p.date for p in req.series]
     result = detect(
@@ -67,6 +71,12 @@ def detect_endpoint(req: DetectRequest):
         kind=req.model, threshold=req.threshold, q=req.q,
         n_z=req.n_z, mcmc_iter=req.mcmc_iter,
     )
+    if "error" in result:
+        raise HTTPException(status_code=422, detail=result["error"])
+    n = len(dates)
     for a in result.get("anomalies", []):
-        a["date"] = dates[a["index"]]
+        idx = a["index"]
+        if not 0 <= idx < n:
+            raise HTTPException(status_code=500, detail=f"anomaly index {idx} out of range for {n} points")
+        a["date"] = dates[idx]
     return result

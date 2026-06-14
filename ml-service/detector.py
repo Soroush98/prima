@@ -21,6 +21,7 @@ import hashlib
 import math
 import time
 from dataclasses import dataclass
+from typing import Any
 
 import numpy as np
 import torch
@@ -28,10 +29,16 @@ import torch.nn as nn
 
 from model import DonutVAE
 
-torch.manual_seed(42)
+# Reproducibility: training re-seeds locally in _train and scoring uses a seeded
+# generator (see _reconstruction_prob) so a given (series, params) is deterministic.
+_SEED = 42
 
 _LOG_2PI = math.log(2 * math.pi)
-_CACHE: dict[str, "TrainedModel"] = {}
+_EPS = 1e-9
+_MAD_TO_SIGMA = 1.4826           # MAD → σ for a Gaussian
+_MIN_PEAKS_FOR_GPD = 10          # min tail exceedances to fit the GPD, else fall back to a quantile
+_SEVERITY_HIGH_Z = 6.0
+_SEVERITY_MED_Z = 4.0
 
 
 @dataclass
@@ -45,15 +52,22 @@ class TrainedModel:
     final_loss: float
 
 
+_CACHE: dict[str, TrainedModel] = {}
+
+
 def _windows(values: np.ndarray, window: int) -> np.ndarray:
     n = len(values)
     return np.stack([values[i : i + window] for i in range(n - window + 1)])
 
 
-def _series_key(values: list[float], window: int, epochs: int, kind: str) -> str:
-    h = hashlib.sha1()
+def _series_key(
+    values: list[float], window: int, epochs: int, kind: str, hidden: int, latent: int, inject_rate: float
+) -> str:
+    h = hashlib.blake2b(digest_size=16)
     h.update(np.asarray(values, dtype=np.float32).tobytes())
-    h.update(f"{window}-{epochs}-{kind}".encode())
+    # every hyperparameter that changes the trained weights must be in the key,
+    # else a cached model trained with different hidden/latent is returned (bug).
+    h.update(f"{window}-{epochs}-{kind}-{hidden}-{latent}-{inject_rate}".encode())
     return h.hexdigest()
 
 
@@ -62,12 +76,20 @@ def _gaussian_log_prob(x: torch.Tensor, mean: torch.Tensor, std: torch.Tensor) -
     return -0.5 * (((x - mean) / std) ** 2 + _LOG_2PI) - torch.log(std)
 
 
-def _train(values, window, epochs, hidden, latent, kind, inject_rate=0.01) -> TrainedModel:
-    key = _series_key(values, window, epochs, kind)
+def _train(
+    values: list[float],
+    window: int,
+    epochs: int,
+    hidden: int,
+    latent: int,
+    kind: str,
+    inject_rate: float = 0.01,
+) -> TrainedModel:
+    key = _series_key(values, window, epochs, kind, hidden, latent, inject_rate)
     if key in _CACHE:
         return _CACHE[key]
 
-    torch.manual_seed(42)
+    torch.manual_seed(_SEED)
     start = time.perf_counter()
     arr = np.asarray(values, dtype=np.float32)
     mean, std = float(arr.mean()), float(arr.std() or 1.0)
@@ -122,7 +144,9 @@ def _masked_reconstruct(model: nn.Module, x: torch.Tensor, mask: torch.Tensor) -
 
 
 @torch.no_grad()
-def _iterative_masked_reconstruct(model, x, mask, iters: int) -> torch.Tensor:
+def _iterative_masked_reconstruct(
+    model: nn.Module, x: torch.Tensor, mask: torch.Tensor, iters: int
+) -> torch.Tensor:
     """Donut's iterative_masked_reconstruct: refine the imputed values `iters` times."""
     for _ in range(iters):
         x = _masked_reconstruct(model, x, mask)
@@ -130,7 +154,13 @@ def _iterative_masked_reconstruct(model, x, mask, iters: int) -> torch.Tensor:
 
 
 @torch.no_grad()
-def _reconstruction_prob(tm: TrainedModel, wins: np.ndarray, n_z: int, missing=None, mcmc_iter: int = 10) -> np.ndarray:
+def _reconstruction_prob(
+    tm: TrainedModel,
+    wins: np.ndarray,
+    n_z: int,
+    missing: np.ndarray | None = None,
+    mcmc_iter: int = 10,
+) -> np.ndarray:
     """Reconstruction probability log p(x|z), MC-averaged over n_z samples.
 
     Returns (N_win, W) of per-position log-probs. When a `missing` mask is given,
@@ -144,8 +174,10 @@ def _reconstruction_prob(tm: TrainedModel, wins: np.ndarray, n_z: int, missing=N
         x = _iterative_masked_reconstruct(tm.model, x, torch.tensor(missing, dtype=torch.float32), mcmc_iter)
 
     z_mean, z_std = tm.model.encode(x)                    # (N, L)
-    # n_z latent samples: z ~ q(z|x) → (n_z, N, L)
-    eps = torch.randn(n_z, *z_mean.shape)
+    # n_z latent samples: z ~ q(z|x) → (n_z, N, L). Seed the generator so repeated
+    # /detect calls on the same (series, params) return identical scores.
+    gen = torch.Generator().manual_seed(_SEED)
+    eps = torch.randn(n_z, *z_mean.shape, generator=gen)
     zs = z_mean.unsqueeze(0) + z_std.unsqueeze(0) * eps
     x_mean, x_std = tm.model.decode(zs)                   # (n_z, N, W)
     target = x.unsqueeze(0)                               # (1, N, W)
@@ -158,9 +190,9 @@ def _pot_threshold(scores: np.ndarray, init_q: float = 0.90, q: float = 0.02) ->
     n = len(scores)
     t = float(np.quantile(scores, init_q))
     peaks = scores[scores > t] - t
-    if len(peaks) < 10:
+    if len(peaks) < _MIN_PEAKS_FOR_GPD:
         return float(np.quantile(scores, 1 - q))
-    m, v = float(peaks.mean()), float(peaks.var(ddof=1) or 1e-9)
+    m, v = float(peaks.mean()), float(peaks.var(ddof=1) or _EPS)
     xi = 0.5 * (1 - m * m / v)
     sigma = m * (1 - xi)
     if sigma <= 0 or not np.isfinite(xi):
@@ -173,7 +205,19 @@ def _pot_threshold(scores: np.ndarray, init_q: float = 0.90, q: float = 0.02) ->
     return float(zq) if np.isfinite(zq) and zq >= t else float(np.quantile(scores, 1 - q))
 
 
-def detect(values, window, epochs, k, hidden, latent, kind="vae", threshold="evt", q=0.02, n_z=256, mcmc_iter=10):
+def detect(
+    values: list[float],
+    window: int,
+    epochs: int,
+    k: float,
+    hidden: int,
+    latent: int,
+    kind: str = "vae",
+    threshold: str = "evt",
+    q: float = 0.02,
+    n_z: int = 256,
+    mcmc_iter: int = 10,
+) -> dict[str, Any]:
     n = len(values)
     if n < window * 2:
         return {"error": f"need at least {window * 2} points, got {n}", "anomalies": [], "scores": []}
@@ -195,8 +239,8 @@ def detect(values, window, epochs, k, hidden, latent, kind="vae", threshold="evt
         scores[i + window - 1] = nll[i, window - 1]
 
     med = float(np.median(scores))
-    mad = float(np.median(np.abs(scores - med))) or 1e-9
-    robust_sigma = 1.4826 * mad
+    mad = float(np.median(np.abs(scores - med))) or _EPS
+    robust_sigma = _MAD_TO_SIGMA * mad
     if threshold == "evt":
         thr = _pot_threshold(scores, 0.90, q)
     else:
@@ -213,7 +257,7 @@ def detect(values, window, epochs, k, hidden, latent, kind="vae", threshold="evt
                 "value": float(values[idx]),
                 "score": round(float(scores[idx]), 5),
                 "zscore": round(float(z), 2),
-                "severity": "high" if z > 6 else "medium" if z > 4 else "low",
+                "severity": "high" if z > _SEVERITY_HIGH_Z else "medium" if z > _SEVERITY_MED_Z else "low",
             }
         )
 

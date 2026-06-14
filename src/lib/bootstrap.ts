@@ -64,16 +64,38 @@ function categorize(desc: string): string {
   return "other";
 }
 
+const DOWNLOAD_TIMEOUT_MS = 120_000; // ~46MB from a third-party raw URL
+const DOWNLOAD_RETRIES = 3;
+
 async function fetchCsv(): Promise<string> {
   if (fs.existsSync(CSV_CACHE) && fs.statSync(CSV_CACHE).size > 40_000_000) {
     return fs.readFileSync(CSV_CACHE, "utf-8");
   }
-  const res = await fetch(RAW_URL);
-  if (!res.ok) throw new Error(`Dataset download failed: HTTP ${res.status}`);
-  const text = await res.text();
-  fs.mkdirSync(path.dirname(CSV_CACHE), { recursive: true });
-  fs.writeFileSync(CSV_CACHE, text);
-  return text;
+  let lastErr: unknown;
+  for (let attempt = 1; attempt <= DOWNLOAD_RETRIES; attempt++) {
+    try {
+      const res = await fetch(RAW_URL, { signal: AbortSignal.timeout(DOWNLOAD_TIMEOUT_MS) });
+      if (!res.ok) {
+        // 5xx is transient and worth retrying; 4xx is not.
+        if (res.status >= 500 && attempt < DOWNLOAD_RETRIES) {
+          lastErr = new Error(`HTTP ${res.status}`);
+        } else {
+          throw new Error(`Dataset download failed: HTTP ${res.status}`);
+        }
+      } else {
+        const text = await res.text();
+        fs.mkdirSync(path.dirname(CSV_CACHE), { recursive: true });
+        fs.writeFileSync(CSV_CACHE, text);
+        return text;
+      }
+    } catch (err) {
+      lastErr = err;
+      if (attempt >= DOWNLOAD_RETRIES) break;
+    }
+    // capped exponential backoff before the next attempt
+    await new Promise((r) => setTimeout(r, 500 * 2 ** (attempt - 1)));
+  }
+  throw new Error(`Dataset download failed after ${DOWNLOAD_RETRIES} attempts: ${String(lastErr)}`);
 }
 
 function buildDb(csv: string): { rows: number; days: number; customers: number } {

@@ -33,8 +33,8 @@ export default function FeatureUsageChart({ features }: { features: FeatureRow[]
           formatter={(v: number) => [v.toLocaleString(), "active users (30d)"]}
         />
         <Bar dataKey="users" radius={[0, 5, 5, 0]}>
-          {features.map((_, i) => (
-            <Cell key={i} fill={COLORS[i % COLORS.length]} />
+          {features.map((f, i) => (
+            <Cell key={f.feature} fill={COLORS[i % COLORS.length]} />
           ))}
         </Bar>
       </BarChart>

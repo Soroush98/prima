@@ -56,32 +56,51 @@ export function parseIntent(
   return { metric, filter };
 }
 
-/** Deterministic SQL builder used as the safe fallback if the agent's generated SQL is rejected. */
-export function buildMetricSql(metric: Metric, filter: DimensionFilter): string {
+/**
+ * Deterministic SQL builder used as the safe fallback if the agent's generated
+ * SQL is rejected. Filter values are bound as parameters (never interpolated)
+ * so this path cannot become a SQL-injection vector if the filter source ever
+ * widens beyond the matched-against-vocab values it carries today.
+ */
+export function buildMetricSql(
+  metric: Metric,
+  filter: DimensionFilter,
+): { sql: string; params: string[] } {
   const conds: string[] = [];
-  if (filter.region) conds.push(`region = '${filter.region}'`);
-  if (filter.platform) conds.push(`platform = '${filter.platform}'`);
-  if (filter.feature) conds.push(`feature = '${filter.feature}'`);
-  const where = conds.length ? `WHERE ${conds.join(" AND ")}` : "";
+  const params: string[] = [];
+  const add = (col: "region" | "platform" | "feature", val: string | undefined, prefix = "") => {
+    if (val === undefined) return;
+    conds.push(`${prefix}${col} = ?`);
+    params.push(val);
+  };
 
   if (metric === "WAU") {
-    return `WITH days AS (SELECT DISTINCT activity_date AS d FROM user_activity)
+    add("region", filter.region, "ua.");
+    add("platform", filter.platform, "ua.");
+    add("feature", filter.feature, "ua.");
+    const sql = `WITH days AS (SELECT DISTINCT activity_date AS d FROM user_activity)
 SELECT days.d AS date,
        (SELECT COUNT(DISTINCT ua.user_id)
           FROM user_activity ua
          WHERE ua.activity_date > date(days.d, '-7 day')
            AND ua.activity_date <= days.d
-           ${conds.length ? "AND " + conds.join(" AND ").replace(/region|platform|feature/g, (m) => "ua." + m) : ""}
+           ${conds.length ? "AND " + conds.join(" AND ") : ""}
        ) AS value
   FROM days
  ORDER BY days.d`;
+    return { sql, params };
   }
 
-  return `SELECT activity_date AS date, COUNT(DISTINCT user_id) AS value
+  add("region", filter.region);
+  add("platform", filter.platform);
+  add("feature", filter.feature);
+  const where = conds.length ? `WHERE ${conds.join(" AND ")}` : "";
+  const sql = `SELECT activity_date AS date, COUNT(DISTINCT user_id) AS value
   FROM user_activity
   ${where}
  GROUP BY activity_date
  ORDER BY activity_date`;
+  return { sql, params };
 }
 
 export function filterLabel(filter: DimensionFilter): string {

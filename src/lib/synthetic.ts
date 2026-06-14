@@ -37,6 +37,15 @@ const PLATFORMS = [
 ];
 const FEATURES = ["dashboard", "search", "export", "ai_assistant", "alerts", "reports", "admin"];
 
+// Injected EU-mobile incident parameters. These define the ground-truth anomaly
+// the eval harness asserts against, so they are named (not magic literals): the
+// acute phase drops retention to ACUTE_RETENTION, then partially recovers to
+// RECOVERY_RETENTION for the rest of the INCIDENT_LEN-day window.
+const INCIDENT_LEN = 20; // total days the bad deploy depresses EU-mobile DAU
+const ACUTE_LEN = 5; // first days of the incident, before partial recovery
+const ACUTE_RETENTION = 0.18; // fraction of EU-mobile users retained at the worst
+const RECOVERY_RETENTION = 0.55; // retained fraction after the acute phase
+
 export function buildSyntheticDb(targetPath: string): { rows: number; days: number } {
   const rand = mulberry32(42);
   const randn = () => {
@@ -114,8 +123,8 @@ export function buildSyntheticDb(targetPath: string): { rows: number; days: numb
       for (let i = 0; i < dau; i++) {
         const region = weightedPick(REGIONS);
         const platform = weightedPick(PLATFORMS);
-        if (d >= badDeployDay && d < badDeployDay + 20 && region === "EU" && platform === "mobile") {
-          const keep = d < badDeployDay + 5 ? 0.18 : 0.55;
+        if (d >= badDeployDay && d < badDeployDay + INCIDENT_LEN && region === "EU" && platform === "mobile") {
+          const keep = d < badDeployDay + ACUTE_LEN ? ACUTE_RETENTION : RECOVERY_RETENTION;
           if (rand() > keep) continue;
         }
         const userId = 1 + Math.floor(rand() * USER_POOL);

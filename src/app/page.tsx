@@ -4,7 +4,10 @@ import { useEffect, useState } from "react";
 import MetricChart from "./components/MetricChart";
 import FeatureUsageChart from "./components/FeatureUsageChart";
 import Architecture from "./components/Architecture";
+import KpiViewer from "./components/KpiViewer";
 import type { PrimaResult } from "@/agents/types";
+
+interface DatasetOpt { id: string; label: string; description: string; kind: "agent" | "viewer" }
 
 // Tuned for the real Online Retail dataset (`npm run seed:github`).
 // For the synthetic dataset (`npm run seed`) try: "Why did DAU drop for EU mobile users?"
@@ -39,15 +42,21 @@ export default function Home() {
   const [error, setError] = useState<string | null>(null);
   const [features, setFeatures] = useState<{ feature: string; users: number; events: number }[]>([]);
   const [evalReport, setEvalReport] = useState<EvalReport | null>(null);
+  const [datasets, setDatasets] = useState<DatasetOpt[]>([
+    { id: "real", label: "Online Retail (real)", description: "", kind: "agent" },
+    { id: "synthetic", label: "Synthetic storyline", description: "", kind: "agent" },
+    { id: "aiops", label: "AIOps KPI (real)", description: "", kind: "viewer" },
+  ]);
+  const [dataset, setDataset] = useState<string>("real");
 
-  async function analyze(q: string) {
+  async function analyze(q: string, ds: string = dataset) {
     setLoading(true);
     setError(null);
     try {
       const res = await fetch("/api/analyze", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ question: q }),
+        body: JSON.stringify({ question: q, dataset: ds }),
       });
       const data = await res.json();
       if (!res.ok) throw new Error(data.error || "Request failed");
@@ -59,13 +68,31 @@ export default function Home() {
     }
   }
 
+  function loadFeatures(ds: string) {
+    fetch(`/api/feature-usage?dataset=${ds}`)
+      .then((r) => r.json())
+      .then((d) => setFeatures(d.features ?? []))
+      .catch(() => setFeatures([]));
+  }
+
+  function onDataset(ds: string) {
+    setDataset(ds);
+    const kind = datasets.find((d) => d.id === ds)?.kind ?? "agent";
+    if (kind === "agent") {
+      setResult(null);
+      analyze(question, ds);
+      loadFeatures(ds);
+    }
+  }
+
   useEffect(() => {
     // Intentional: kick off the initial analysis + dashboard fetches once on mount.
     // eslint-disable-next-line react-hooks/set-state-in-effect
     analyze(question);
-    fetch("/api/feature-usage")
+    loadFeatures("real");
+    fetch("/api/datasets")
       .then((r) => r.json())
-      .then((d) => setFeatures(d.features ?? []))
+      .then((d) => d.datasets && setDatasets(d.datasets))
       .catch(() => {});
     fetch("/api/eval")
       .then((r) => r.json())
@@ -78,6 +105,8 @@ export default function Home() {
   const proj = result?.forecast[result.forecast.length - 1];
   const deltaPct = last && proj ? ((proj.forecast - last.value) / last.value) * 100 : 0;
   const mode = result?.telemetry.llmMode ?? "live";
+  const currentKind = datasets.find((d) => d.id === dataset)?.kind ?? "agent";
+  const datasetDesc = datasets.find((d) => d.id === dataset)?.description ?? "";
 
   return (
     <div className="wrap">
@@ -87,7 +116,21 @@ export default function Home() {
             Prima<span className="dot">.</span> <span className="muted" style={{ fontSize: 16 }}>Agentic DAU/WAU Intelligence</span>
           </div>
         </div>
-        <span className={`badge ${mode}`}>● Live Claude agents</span>
+        <div style={{ display: "flex", gap: 12, alignItems: "center" }}>
+          <select
+            className="dataset-select"
+            value={dataset}
+            onChange={(e) => onDataset(e.target.value)}
+            title="Dataset"
+          >
+            {datasets.map((d) => (
+              <option key={d.id} value={d.id}>
+                {d.label}
+              </option>
+            ))}
+          </select>
+          <span className={`badge ${mode}`}>● Live Claude agents</span>
+        </div>
       </div>
       <div className="subtitle">
         A LangGraph agent fleet that autonomously writes SQL, detects anomalies, forecasts engagement, and
@@ -106,7 +149,14 @@ export default function Home() {
 
       {tab === "architecture" && <Architecture />}
 
-      {tab === "dashboard" && (
+      {tab === "dashboard" && currentKind === "viewer" && (
+        <>
+          {datasetDesc && <div className="subtitle" style={{ marginTop: 4 }}>{datasetDesc}</div>}
+          <KpiViewer />
+        </>
+      )}
+
+      {tab === "dashboard" && currentKind === "agent" && (
       <>
       {/* Ask bar */}
       <div className="ask">
@@ -122,7 +172,8 @@ export default function Home() {
       </div>
       <div className="chips">
         {EXAMPLES.map((ex) => (
-          <span
+          <button
+            type="button"
             key={ex}
             className="chip"
             onClick={() => {
@@ -131,7 +182,7 @@ export default function Home() {
             }}
           >
             {ex}
-          </span>
+          </button>
         ))}
       </div>
 
@@ -203,8 +254,8 @@ export default function Home() {
                     </div>
                   )}
                   <ul className="hyp">
-                    {result.rootCause.hypotheses.map((h, i) => (
-                      <li key={i}>{h}</li>
+                    {result.rootCause.hypotheses.map((h) => (
+                      <li key={h}>{h}</li>
                     ))}
                   </ul>
                 </>
@@ -217,8 +268,8 @@ export default function Home() {
             <div className="card">
               <h3>Agent execution trace (LangGraph)</h3>
               <div className="trace">
-                {result.trace.map((t, i) => (
-                  <div key={i} className={`trace-row ${t.status}`}>
+                {result.trace.map((t) => (
+                  <div key={t.agent} className={`trace-row ${t.status}`}>
                     <span className={`dot-status ${t.status}`} />
                     <span className="trace-agent">
                       {t.agent}

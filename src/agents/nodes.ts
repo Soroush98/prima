@@ -29,7 +29,7 @@ export async function orchestrator(state: PrimaStateType): Promise<Update> {
 /* ------------------------------------------------------------------ */
 export async function sqlAnalyst(state: PrimaStateType): Promise<Update> {
   const start = performance.now();
-  const fallbackSql = buildMetricSql(state.metric, state.filter);
+  const fallback = buildMetricSql(state.metric, state.filter);
 
   const llm = await callLLM(
     `You are a senior analytics engineer. Write ONE read-only SQLite query (SELECT/WITH only) that returns columns exactly named "date" and "value", one row per day ordered ascending.\n\n${SCHEMA_DOC}\n\nReturn ONLY the SQL, no prose, no markdown fences.`,
@@ -38,17 +38,27 @@ export async function sqlAnalyst(state: PrimaStateType): Promise<Update> {
 
   // Sanitize any markdown fences the model may add, then guard.
   let sql = llm.text.replace(/```sql|```/gi, "").trim();
+  let params: unknown[] = [];
   let usedFallback = false;
-  if (!guardReadOnlySql(sql).ok) {
-    sql = fallbackSql;
+  let fallbackReason: string | undefined;
+
+  const guard = guardReadOnlySql(sql);
+  if (!guard.ok) {
+    sql = fallback.sql;
+    params = fallback.params;
     usedFallback = true;
+    fallbackReason = `guard rejected LLM SQL: ${guard.reason}`;
   }
 
-  let result = safeQuery(sql);
+  let result = safeQuery(sql, params);
   if (!result.ok) {
-    sql = fallbackSql;
+    fallbackReason = usedFallback
+      ? `fallback query failed: ${result.error}`
+      : `LLM SQL failed: ${result.error}`;
+    sql = fallback.sql;
+    params = fallback.params;
     usedFallback = true;
-    result = safeQuery(sql);
+    result = safeQuery(sql, params);
   }
 
   const series: Point[] = result.rows.map((r) => ({
@@ -65,7 +75,7 @@ export async function sqlAnalyst(state: PrimaStateType): Promise<Update> {
     detail: usedFallback
       ? `Used validated template SQL (${series.length} days, ${result.ms}ms query).`
       : `Generated & executed SQL (${series.length} days, ${result.ms}ms query).`,
-    data: { sql, rows: series.length, queryMs: result.ms },
+    data: { sql, rows: series.length, queryMs: result.ms, fallbackReason, error: result.error },
   };
 
   return {

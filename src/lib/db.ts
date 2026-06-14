@@ -1,29 +1,40 @@
 import Database from "better-sqlite3";
 import path from "node:path";
 import fs from "node:fs";
+import { activeDbPath } from "./datasetContext";
 
 /**
- * Singleton SQLite connection. Stands in for the BigQuery warehouse the Cisco
- * role targets — same SQL surface (CTEs, window functions, COUNT DISTINCT),
- * just local and free to demo.
+ * SQLite connections, one per warehouse file. Stands in for the BigQuery
+ * warehouse the Cisco role targets — same SQL surface (CTEs, window functions,
+ * COUNT DISTINCT), just local and free to demo. The *active* warehouse is set
+ * per request by the dataset picker (see datasetContext); outside a request it
+ * defaults to `DB_PATH`.
  */
-let _db: Database.Database | null = null;
+const _dbs = new Map<string, Database.Database>();
 
 // Overridable so the eval harness can target an isolated synthetic DB without
 // disturbing the runtime warehouse.
 export const DB_PATH =
   process.env.PRIMA_DB_PATH || path.join(process.cwd(), "data", "prima.db");
 
+/** Resolve the warehouse the current request targets (ALS), else the default. */
+function currentDbPath(): string {
+  return activeDbPath() ?? DB_PATH;
+}
+
 export function getDb(): Database.Database {
-  if (_db) return _db;
-  if (!fs.existsSync(DB_PATH)) {
+  const p = currentDbPath();
+  const existing = _dbs.get(p);
+  if (existing) return existing;
+  if (!fs.existsSync(p)) {
     throw new Error(
-      `Database not found at ${DB_PATH}. Run \`npm run seed\` first to generate synthetic telemetry.`,
+      `Database not found at ${p}. Run \`npm run seed\` first to generate synthetic telemetry.`,
     );
   }
-  _db = new Database(DB_PATH, { readonly: true, fileMustExist: true });
-  _db.pragma("journal_mode = WAL");
-  return _db;
+  const db = new Database(p, { readonly: true, fileMustExist: true });
+  db.pragma("journal_mode = WAL");
+  _dbs.set(p, db);
+  return db;
 }
 
 export interface DimensionVocab {
@@ -32,18 +43,21 @@ export interface DimensionVocab {
   features: string[];
 }
 
-let _vocab: DimensionVocab | null = null;
+const _vocabs = new Map<string, DimensionVocab>();
 
-/** Distinct dimension values actually present in the warehouse (cached). */
+/** Distinct dimension values actually present in the active warehouse (cached). */
 export function getDimensionVocab(): DimensionVocab {
-  if (_vocab) return _vocab;
+  const p = currentDbPath();
+  const cached = _vocabs.get(p);
+  if (cached) return cached;
   const db = getDb();
   const col = (c: string) =>
     (db.prepare(`SELECT DISTINCT ${c} AS v FROM user_activity ORDER BY ${c}`).all() as { v: string }[])
       .map((r) => r.v)
       .filter(Boolean);
-  _vocab = { regions: col("region"), platforms: col("platform"), features: col("feature") };
-  return _vocab;
+  const vocab = { regions: col("region"), platforms: col("platform"), features: col("feature") };
+  _vocabs.set(p, vocab);
+  return vocab;
 }
 
 export interface SqlGuardResult {
@@ -56,7 +70,13 @@ export interface SqlGuardResult {
  * SELECT/WITH statement is ever allowed to touch the warehouse.
  */
 export function guardReadOnlySql(sql: string): SqlGuardResult {
-  const trimmed = sql.trim().replace(/;+\s*$/, "");
+  // Strip SQL comments first so a banned keyword can't be smuggled past the
+  // denylist via `/* */` or `--`. The real boundary is the readonly connection
+  // (see getDb); this denylist is belt-and-suspenders on top of that.
+  const stripped = sql
+    .replace(/\/\*[\s\S]*?\*\//g, " ")
+    .replace(/--[^\n]*/g, " ");
+  const trimmed = stripped.trim().replace(/;+\s*$/, "");
   if (trimmed.includes(";")) {
     return { ok: false, reason: "Multiple statements are not allowed." };
   }
