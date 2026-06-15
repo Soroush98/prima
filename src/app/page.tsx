@@ -94,7 +94,9 @@ export default function Home() {
       .catch(() => {});
     fetch("/api/eval")
       .then((r) => r.json())
-      .then((d) => !d.error && setEvalReport(d))
+      // Only set a *real* report — when no scorecard exists yet the API returns
+      // { available: false } (no `aggregate`); setting that would crash the render.
+      .then((d) => d?.aggregate && setEvalReport(d))
       .catch(() => {});
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
@@ -320,8 +322,8 @@ export default function Home() {
           )}
         </div>
         <div className="card">
-          <h3>LLM evaluation scorecard {evalReport && <span className={`badge ${evalReport.llmMode}`}>{evalReport.llmMode}</span>}</h3>
-          {evalReport ? (
+          <h3>LLM evaluation scorecard {evalReport?.aggregate && <span className={`badge ${evalReport.llmMode}`}>{evalReport.llmMode}</span>}</h3>
+          {evalReport?.aggregate ? (
             <div>
               <div className="eval-metric">
                 <span className="muted">Pass rate</span>
