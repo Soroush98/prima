@@ -54,11 +54,14 @@ jobs:
       - name: Check FLY_API_TOKEN is set
         run: |
           if [ -z "$FLY_API_TOKEN" ]; then
-            echo "::error::FLY_API_TOKEN secret is missing. Create one with 'fly tokens create deploy -x 999999h' and add it with 'gh secret set FLY_API_TOKEN'."
+            echo "::error::FLY_API_TOKEN secret is missing. Create an ORG-scoped token (it deploys both prima-web and prima-ml) with 'fly tokens create org <org> -x 8760h' and add it with 'gh secret set FLY_API_TOKEN'."
             exit 1
           fi
       - uses: actions/checkout@v5
       - uses: superfly/flyctl-actions/setup-flyctl@master
+      # Fail fast with a clear identity error if the token is invalid/expired/mis-scoped,
+      # instead of a cryptic "unauthorized" mid-deploy.
+      - run: flyctl auth whoami
       - run: flyctl deploy --remote-only
 
   # ---- ML ensemble (only when ml-service/** changed) ----
@@ -73,10 +76,13 @@ jobs:
       - name: Check FLY_API_TOKEN is set
         run: |
           if [ -z "$FLY_API_TOKEN" ]; then
-            echo "::error::FLY_API_TOKEN secret is missing. Create one with 'fly tokens create deploy -x 999999h' and add it with 'gh secret set FLY_API_TOKEN'."
+            echo "::error::FLY_API_TOKEN secret is missing. Create an ORG-scoped token (it deploys both prima-web and prima-ml) with 'fly tokens create org <org> -x 8760h' and add it with 'gh secret set FLY_API_TOKEN'."
             exit 1
           fi
       - uses: actions/checkout@v5
       - uses: superfly/flyctl-actions/setup-flyctl@master
+      # Fail fast with a clear identity error if the token is invalid/expired/mis-scoped,
+      # instead of a cryptic "unauthorized" mid-deploy.
+      - run: flyctl auth whoami
       - run: flyctl deploy --remote-only
         working-directory: ml-service
