@@ -8,14 +8,17 @@ tsconfig.tsbuildinfo
 .env.*
 !.env.example
 
-# data artifacts — DB is rebuilt on the Fly volume on first request
-data/*.db
+# data artifacts. The committed, derived data/prima.db (the read-only SMD warehouse)
+# IS shipped — the runner copies it. Everything else here is excluded.
 data/*.db-*
 data/*.db.building
 data/online-retail.csv
 data/eval-*.db
 # 360MB raw AIOps dataset — only the small data/aiops-sample.json ships in the image
 data/aiops-kpi/
+# 464MB raw SMD — the image uses the committed prima.db, so the raw files never
+# enter the build context (they're only needed locally for bench_smd.py).
+data/smd/
 
 # python service (deployed as its own Fly app from ml-service/)
 ml-service/.venv

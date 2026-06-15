@@ -5,8 +5,16 @@ out
 .env.local
 *.db
 *.db-journal
+*.db-wal
+*.db-shm
+# The baked, read-only SMD warehouse IS committed: CI builds the image from git,
+# so it needs the derived DB. The 464MB raw data/smd is not tracked (see below).
+!data/prima.db
 *.tsbuildinfo
 next-env.d.ts
 data/online-retail.csv
 data/aiops-kpi/
+# Raw Server Machine Dataset — derived into the committed prima.db; fetch on demand
+# (see README) only to run ml-service/bench_smd.py or regenerate the warehouse.
+data/smd/
 ml-service/.venv/

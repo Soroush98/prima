@@ -8,6 +8,7 @@
     "eval": "PRIMA_DB_PATH=data/eval-smd.db node --env-file-if-exists=.env --import tsx src/eval/runEval.ts",
     "bench:detectors": "tsx src/eval/benchmarkDetectors.ts",
     "bench:smd": "node --import tsx src/eval/benchmarkSmdDetector.ts",
+    "build:warehouse": "node --import tsx scripts/build-warehouse.ts",
     "ml": "ml-service/run.sh",
     "dev": "next dev",
     "build": "next build --webpack",

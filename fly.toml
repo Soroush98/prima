@@ -7,8 +7,9 @@ primary_region = "yyz"
 
 [env]
   PORT = "3000"
-  # SQLite warehouse persists on the mounted volume → no re-download on restart.
-  PRIMA_DB_PATH = "/data/prima.db"
+  # Read-only SMD warehouse is baked into the image at build time (see Dockerfile),
+  # so it ships ready — no runtime build and no volume needed.
+  PRIMA_DB_PATH = "/app/data/prima.db"
   PRIMA_MODEL = "claude-sonnet-4-6"
   # PyTorch ensemble (separate Fly app). Web degrades to the statistical detector if it's down.
   ML_SERVICE_URL = "http://prima-ml.internal:8000"
@@ -19,13 +20,12 @@ primary_region = "yyz"
   force_https = true
   auto_stop_machines = "stop"
   auto_start_machines = true
-  # Keep 0 to scale-to-zero (cheapest). The DB persists on the volume, so only the
-  # very first request ever pays the dataset-build cost. Set to 1 to avoid cold starts.
+  # Keep 0 to scale-to-zero (cheapest). The warehouse is baked into the image, so a
+  # cold start serves immediately with no build cost. Set to 1 to avoid cold starts.
   min_machines_running = 0
 
-[[mounts]]
-  source = "prima_data"
-  destination = "/data"
+# No volume: the warehouse is immutable, derived data baked into the image. (If the
+# old `prima_data` volume still exists, it's now unused — `fly volumes destroy` it.)
 
 [[vm]]
   size = "shared-cpu-1x"

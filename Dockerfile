@@ -34,7 +34,9 @@ COPY --from=build /app/.next/standalone ./
 COPY --from=build /app/.next/static ./.next/static
 # Bundled AIOps KPI sample for the read-only dataset viewer (read at runtime by /api/kpi).
 COPY --from=build /app/data/aiops-sample.json ./data/aiops-sample.json
-# DB + CSV cache live on the mounted volume (PRIMA_DB_PATH=/data/prima.db); ensure it exists.
-RUN mkdir -p /data
+# Committed, read-only SMD warehouse (derived from data/smd; regenerate with
+# `npm run build:warehouse`). The app reads it at PRIMA_DB_PATH=/app/data/prima.db
+# — no runtime build, no volume needed.
+COPY --from=build /app/data/prima.db ./data/prima.db
 EXPOSE 3000
 CMD ["node", "server.js"]
