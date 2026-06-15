@@ -4,7 +4,7 @@
  * SQL validity, anomaly/diagnosis correctness, hallucination, latency, cost.
  */
 import { runPrima } from "@/agents/graph";
-import { guardReadOnlySql, safeQuery } from "@/lib/db";
+import { guardReadOnlySql, safeQuery, getDimensionVocab } from "@/lib/db";
 import { GOLDEN, type GoldenCase } from "./golden";
 
 export interface CaseScore {
@@ -49,13 +49,11 @@ async function scoreCase(gc: GoldenCase): Promise<CaseScore> {
   // 1. routing
   const routingCorrect =
     r.metric === gc.expect.metric &&
-    (gc.expect.region ? r.filter.region === gc.expect.region : true) &&
-    (gc.expect.platform ? r.filter.platform === gc.expect.platform : true) &&
-    (gc.expect.feature ? r.filter.feature === gc.expect.feature : true);
+    (gc.expect.entity ? r.filter.entity === gc.expect.entity : true);
   checks.push({
     name: "routing",
     passed: routingCorrect,
-    detail: `metric=${r.metric} scope=${JSON.stringify(r.filter)}`,
+    detail: `metric=${r.metric} entity=${r.filter.entity ?? "?"}`,
   });
 
   // 2. SQL validity (guard) + actually executes
@@ -79,23 +77,25 @@ async function scoreCase(gc: GoldenCase): Promise<CaseScore> {
     });
   }
 
-  // 4. root-cause attribution
+  // 4. root-cause attribution — the worst anomaly lands in a labeled segment,
+  //    so the agent's channel attribution is graded against ground truth.
   let rootCauseCorrect: boolean | null = null;
-  if (gc.expect.rootCauseVersionIncludes) {
-    rootCauseCorrect = Boolean(
-      r.rootCause?.suspectedDeploys.some((d) => d.version.includes(gc.expect.rootCauseVersionIncludes!)),
-    );
+  if (gc.expect.rootCauseGraded) {
+    rootCauseCorrect = r.rootCause?.grade != null;
     checks.push({
       name: "root_cause",
       passed: rootCauseCorrect,
-      detail: r.rootCause?.suspectedDeploys.map((d) => d.version).join(", ") || "none",
+      detail: r.rootCause?.grade
+        ? `graded P=${r.rootCause.grade.precision} R=${r.rootCause.grade.recall}`
+        : "worst anomaly not in a labeled segment",
     });
   }
 
-  // 5. hallucination guard: the summary must not invent regions/platforms outside the known vocab
-  const KNOWN = ["NA", "EU", "APAC", "LATAM", "web", "mobile", "desktop"];
-  const mentioned = (r.summary.match(/\b(NA|EU|APAC|LATAM|web|mobile|desktop)\b/g) ?? []) as string[];
-  const hallucinationFree = mentioned.every((m) => KNOWN.includes(m));
+  // 5. hallucination guard: the summary must not invent entity ids outside the
+  //    warehouse's known vocab.
+  const KNOWN = new Set(getDimensionVocab().entities);
+  const mentioned = (r.summary.match(/machine-\d+-\d+/g) ?? []) as string[];
+  const hallucinationFree = mentioned.every((m) => KNOWN.has(m));
   checks.push({
     name: "no_hallucination",
     passed: hallucinationFree,

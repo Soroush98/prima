@@ -187,7 +187,43 @@ export function detectAnomalies(points: Point[], opts: DetectOpts = {}): Anomaly
   return out;
 }
 
+/**
+ * Detector for a series whose value is *already* an anomaly score (e.g. the SMD
+ * entity health score = max robust-z across channels). There is no seasonal
+ * baseline to subtract — anomalies are simply the upper tail. We set the alert
+ * threshold with the same self-calibrating EVT/POT rule used elsewhere (SPOT),
+ * then flag every point above it.
+ */
+export function detectScoreAnomalies(points: Point[], q = 0.02): Anomaly[] {
+  const n = points.length;
+  if (n < 50) return [];
+  const scores = points.map((p) => p.value);
+  const baseline = median(scores);
+  const positive = scores.filter((s) => s > 0);
+  if (positive.length < 20) return [];
+
+  const cutoff = potThreshold(positive, 0.92, q).threshold;
+  const out: Anomaly[] = [];
+  points.forEach((p) => {
+    const s = p.value;
+    if (s < cutoff) return;
+    out.push({
+      date: p.date,
+      value: +s.toFixed(2),
+      expected: +baseline.toFixed(2),
+      zscore: +s.toFixed(2), // the score is itself a robust z
+      deviationPct: baseline ? +(((s - baseline) / baseline) * 100).toFixed(1) : 0,
+      direction: "spike",
+      severity: s > 6 ? "high" : s > 4 ? "medium" : "low",
+    });
+  });
+  return out;
+}
+
 function addDays(date: string, n: number): string {
+  // SMD series are indexed by integer timestep, not calendar date — advance the
+  // index directly. Calendar series (ISO dates) advance by days.
+  if (/^\d+$/.test(date)) return String(Number(date) + n);
   const d = new Date(date + "T00:00:00Z");
   d.setUTCDate(d.getUTCDate() + n);
   return d.toISOString().slice(0, 10);

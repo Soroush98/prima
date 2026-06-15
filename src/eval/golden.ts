@@ -1,9 +1,10 @@
 /**
- * Golden dataset for evaluating the agent fleet.
+ * Golden dataset for evaluating the agent fleet against the real SMD warehouse.
  *
- * Each case pins a natural-language question to the metric/scope the
- * orchestrator should resolve and asserts on properties of the resulting
- * analysis (anomaly presence, root-cause deploy attribution, forecast shape).
+ * Each case pins a natural-language question to the entity the orchestrator
+ * should resolve and asserts on properties of the resulting analysis (anomaly
+ * presence, and whether root-cause attribution lands on a ground-truth-labeled
+ * segment from SMD interpretation_label).
  */
 import type { Metric } from "@/agents/types";
 
@@ -12,46 +13,38 @@ export interface GoldenCase {
   question: string;
   expect: {
     metric: Metric;
-    region?: string;
-    platform?: string;
-    feature?: string;
+    entity?: string;
     /** at least one anomaly expected in the series */
     hasAnomaly?: boolean;
-    /** root cause should cite a deploy whose version contains this string */
-    rootCauseVersionIncludes?: string;
+    /** the worst anomaly should fall in a labeled segment (root cause is gradeable) */
+    rootCauseGraded?: boolean;
   };
 }
 
 export const GOLDEN: GoldenCase[] = [
   {
-    id: "global-dau-health",
-    question: "Give me a health check on global DAU.",
-    expect: { metric: "DAU", hasAnomaly: true },
+    id: "m1-1-health",
+    question: "Give me a health check on machine-1-1.",
+    expect: { metric: "health", entity: "machine-1-1", hasAnomaly: true, rootCauseGraded: true },
   },
   {
-    id: "eu-mobile-drop",
-    question: "Why did DAU drop for EU mobile users?",
-    expect: {
-      metric: "DAU",
-      region: "EU",
-      platform: "mobile",
-      hasAnomaly: true,
-      rootCauseVersionIncludes: "v4.2",
-    },
+    id: "m2-1-rootcause",
+    question: "What is the worst anomaly on machine-2-1 and its root cause?",
+    expect: { metric: "health", entity: "machine-2-1", hasAnomaly: true },
   },
   {
-    id: "wau-trend",
-    question: "What is the WAU trend and 14-day forecast?",
-    expect: { metric: "WAU" },
+    id: "m1-6-diagnose",
+    question: "Diagnose the anomalies on machine-1-6.",
+    expect: { metric: "health", entity: "machine-1-6", hasAnomaly: true },
   },
   {
-    id: "ai-assistant-usage",
-    question: "How is ai_assistant feature usage trending?",
-    expect: { metric: "DAU", feature: "ai_assistant" },
+    id: "m3-7-trend",
+    question: "Is machine-3-7 trending toward instability?",
+    expect: { metric: "health", entity: "machine-3-7" },
   },
   {
-    id: "export-decay",
-    question: "Is the export feature losing users?",
-    expect: { metric: "DAU", feature: "export" },
+    id: "m3-11-forecast",
+    question: "Forecast the health score for machine-3-11.",
+    expect: { metric: "health", entity: "machine-3-11" },
   },
 ];

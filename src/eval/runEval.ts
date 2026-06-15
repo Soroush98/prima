@@ -5,15 +5,17 @@
  */
 import fs from "node:fs";
 import path from "node:path";
-import { buildSyntheticDb } from "@/lib/synthetic";
+import { buildSmdDb } from "@/lib/smdWarehouse";
 import { DB_PATH } from "@/lib/db";
 import { runEvaluation } from "./evaluate";
 
 async function main() {
-  // Build the synthetic, ground-truth dataset into whatever DB_PATH resolves to
-  // (the npm script points PRIMA_DB_PATH at an isolated eval DB).
-  const { rows, days } = buildSyntheticDb(DB_PATH);
-  console.log(`  Built synthetic eval dataset: ${rows.toLocaleString()} rows / ${days} days → ${DB_PATH}`);
+  // Build the real SMD warehouse (with ground-truth labels) into DB_PATH.
+  const { entities, rows, anomalies } = buildSmdDb(DB_PATH);
+  console.log(
+    `  Built SMD eval warehouse: ${entities} entities / ${rows.toLocaleString()} timesteps / ` +
+      `${anomalies.toLocaleString()} labeled anomalies → ${DB_PATH}`,
+  );
 
   const report = await runEvaluation(new Date().toISOString());
 

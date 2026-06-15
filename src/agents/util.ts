@@ -1,112 +1,65 @@
 import type { DimensionFilter, Metric } from "./types";
 
-export const SCHEMA_DOC = `Table: user_activity (one row per user, per day, per feature used)
-  activity_date TEXT  -- 'YYYY-MM-DD'
-  user_id       INTEGER
-  region        TEXT  -- one of: NA, EU, APAC, LATAM
-  platform      TEXT  -- one of: web, mobile, desktop
-  feature       TEXT  -- one of: dashboard, search, export, ai_assistant, alerts, reports, admin
+export const SCHEMA_DOC = `Real SMD (Server Machine Dataset) server-telemetry warehouse.
 
-Table: deploys (release events to correlate against anomalies)
-  deploy_date TEXT, version TEXT, service TEXT, region TEXT, platform TEXT, notes TEXT
+Table: health (one row per entity, per timestep) — the analysis series
+  entity TEXT     -- server id, e.g. 'machine-1-1'
+  t      INTEGER  -- timestep index (per-minute samples), ascending from 0
+  value  REAL     -- entity anomaly score = max robust z-score across all 38 metric channels
+  label  INTEGER  -- ground-truth: 1 if this timestep is a known anomaly, else 0
 
-DAU(day)  = COUNT(DISTINCT user_id) for that activity_date.
-WAU(day)  = COUNT(DISTINCT user_id) over the trailing 7 days ending on that day.`;
+Table: metrics (raw channels, for root-cause attribution)
+  entity TEXT, t INTEGER, m01 … m38 REAL   -- the 38 metric channels, normalized [0,1]
+
+Table: interp (ground-truth root cause per anomaly segment)
+  entity TEXT, seg_start INTEGER, seg_end INTEGER, channel INTEGER  -- culprit channel (1..38)
+
+The analysis series for an entity is its health score over time:
+  SELECT t AS date, value FROM health WHERE entity = '<id>' ORDER BY t`;
 
 export interface DimensionVocab {
-  regions: string[];
-  platforms: string[];
-  features: string[];
+  entities: string[];
 }
 
-/** Match a question against a list of known dimension values (case-insensitive,
- *  underscores treated as spaces). Returns the longest match so "United Kingdom"
- *  wins over a stray "United". */
-function matchValue(q: string, values: string[]): string | undefined {
+/** Match a question against the known entity ids (case/separator-insensitive). */
+function matchEntity(q: string, entities: string[]): string | undefined {
+  const norm = (s: string) => s.toLowerCase().replace(/[\s_-]+/g, "");
+  const nq = norm(q);
   let best: string | undefined;
-  for (const v of values) {
-    const needle = v.toLowerCase().replace(/_/g, " ");
-    if (q.includes(needle) || q.includes(v.toLowerCase())) {
-      if (!best || v.length > best.length) best = v;
+  for (const e of entities) {
+    if (nq.includes(norm(e))) {
+      if (!best || e.length > best.length) best = e; // longest id wins
     }
   }
   return best;
 }
 
 /**
- * Heuristic parse of the natural-language question into metric + dimension
- * filter, using the dataset's *actual* dimension vocabulary so it works on the
- * synthetic data (NA/EU, mobile, ai_assistant) and the real Online Retail data
- * (United Kingdom, Germany, seasonal, …) alike.
+ * Heuristic parse of the natural-language question into the analysis series.
+ * The metric is always the entity health score; the only dimension is *which*
+ * server entity to analyze. Falls back to the first available entity.
  */
 export function parseIntent(
   question: string,
   vocab: DimensionVocab,
 ): { metric: Metric; filter: DimensionFilter } {
-  const q = question.toLowerCase();
-  const metric: Metric = /\bwau\b|weekly active/.test(q) ? "WAU" : "DAU";
-  const filter: DimensionFilter = {};
-  const region = matchValue(q, vocab.regions);
-  const platform = matchValue(q, vocab.platforms);
-  const feature = matchValue(q, vocab.features);
-  if (region) filter.region = region;
-  // ignore a trivial single-value platform vocab (e.g. real data is all 'web')
-  if (platform && vocab.platforms.length > 1) filter.platform = platform;
-  if (feature) filter.feature = feature;
-  return { metric, filter };
+  const entity = matchEntity(question, vocab.entities) ?? vocab.entities[0];
+  return { metric: "health", filter: { entity } };
 }
 
 /**
  * Deterministic SQL builder used as the safe fallback if the agent's generated
- * SQL is rejected. Filter values are bound as parameters (never interpolated)
- * so this path cannot become a SQL-injection vector if the filter source ever
- * widens beyond the matched-against-vocab values it carries today.
+ * SQL is rejected. The entity is bound as a parameter (never interpolated).
  */
 export function buildMetricSql(
-  metric: Metric,
+  _metric: Metric,
   filter: DimensionFilter,
 ): { sql: string; params: string[] } {
-  const conds: string[] = [];
-  const params: string[] = [];
-  const add = (col: "region" | "platform" | "feature", val: string | undefined, prefix = "") => {
-    if (val === undefined) return;
-    conds.push(`${prefix}${col} = ?`);
-    params.push(val);
-  };
-
-  if (metric === "WAU") {
-    add("region", filter.region, "ua.");
-    add("platform", filter.platform, "ua.");
-    add("feature", filter.feature, "ua.");
-    const sql = `WITH days AS (SELECT DISTINCT activity_date AS d FROM user_activity)
-SELECT days.d AS date,
-       (SELECT COUNT(DISTINCT ua.user_id)
-          FROM user_activity ua
-         WHERE ua.activity_date > date(days.d, '-7 day')
-           AND ua.activity_date <= days.d
-           ${conds.length ? "AND " + conds.join(" AND ") : ""}
-       ) AS value
-  FROM days
- ORDER BY days.d`;
-    return { sql, params };
-  }
-
-  add("region", filter.region);
-  add("platform", filter.platform);
-  add("feature", filter.feature);
-  const where = conds.length ? `WHERE ${conds.join(" AND ")}` : "";
-  const sql = `SELECT activity_date AS date, COUNT(DISTINCT user_id) AS value
-  FROM user_activity
-  ${where}
- GROUP BY activity_date
- ORDER BY activity_date`;
-  return { sql, params };
+  const entity = filter.entity ?? "";
+  const sql = `SELECT t AS date, value FROM health WHERE entity = ? ORDER BY t`;
+  return { sql, params: [entity] };
 }
 
 export function filterLabel(filter: DimensionFilter): string {
-  const parts: string[] = [];
-  if (filter.region) parts.push(filter.region);
-  if (filter.platform) parts.push(filter.platform);
-  if (filter.feature) parts.push(filter.feature);
-  return parts.length ? parts.join(" · ") : "global";
+  return filter.entity ?? "all entities";
 }

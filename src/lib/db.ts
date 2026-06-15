@@ -28,7 +28,7 @@ export function getDb(): Database.Database {
   if (existing) return existing;
   if (!fs.existsSync(p)) {
     throw new Error(
-      `Database not found at ${p}. Run \`npm run seed\` first to generate synthetic telemetry.`,
+      `Database not found at ${p}. The SMD warehouse is built on first request (see ensureSmdDb).`,
     );
   }
   const db = new Database(p, { readonly: true, fileMustExist: true });
@@ -38,24 +38,24 @@ export function getDb(): Database.Database {
 }
 
 export interface DimensionVocab {
-  regions: string[];
-  platforms: string[];
-  features: string[];
+  /** SMD entity ids present in the active warehouse (e.g. "machine-1-1"). */
+  entities: string[];
 }
 
 const _vocabs = new Map<string, DimensionVocab>();
 
-/** Distinct dimension values actually present in the active warehouse (cached). */
+/** Entity ids actually present in the active warehouse (cached). */
 export function getDimensionVocab(): DimensionVocab {
   const p = currentDbPath();
   const cached = _vocabs.get(p);
   if (cached) return cached;
   const db = getDb();
-  const col = (c: string) =>
-    (db.prepare(`SELECT DISTINCT ${c} AS v FROM user_activity ORDER BY ${c}`).all() as { v: string }[])
-      .map((r) => r.v)
-      .filter(Boolean);
-  const vocab = { regions: col("region"), platforms: col("platform"), features: col("feature") };
+  const entities = (
+    db.prepare("SELECT DISTINCT entity AS v FROM health ORDER BY entity").all() as { v: string }[]
+  )
+    .map((r) => r.v)
+    .filter(Boolean);
+  const vocab = { entities };
   _vocabs.set(p, vocab);
   return vocab;
 }

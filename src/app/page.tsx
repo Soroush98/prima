@@ -9,14 +9,13 @@ import type { PrimaResult } from "@/agents/types";
 
 interface DatasetOpt { id: string; label: string; description: string; kind: "agent" | "viewer" }
 
-// Tuned for the real Online Retail dataset (`npm run seed:github`).
-// For the synthetic dataset (`npm run seed`) try: "Why did DAU drop for EU mobile users?"
+// Real SMD server-telemetry questions (warehouse auto-builds on first request).
 const EXAMPLES = [
-  "Give me a health check on global DAU.",
-  "How is DAU trending in the United Kingdom?",
-  "Did DAU drop in Germany?",
-  "What is the WAU trend and 14-day forecast?",
-  "How is the seasonal category trending?",
+  "Give me a health check on machine-1-1.",
+  "What is the worst anomaly on machine-2-1 and its root cause?",
+  "Is machine-3-7 trending toward instability?",
+  "Diagnose the anomalies on machine-1-6.",
+  "Forecast the health score for machine-3-11.",
 ];
 
 interface EvalReport {
@@ -43,11 +42,10 @@ export default function Home() {
   const [features, setFeatures] = useState<{ feature: string; users: number; events: number }[]>([]);
   const [evalReport, setEvalReport] = useState<EvalReport | null>(null);
   const [datasets, setDatasets] = useState<DatasetOpt[]>([
-    { id: "real", label: "Online Retail (real)", description: "", kind: "agent" },
-    { id: "synthetic", label: "Synthetic storyline", description: "", kind: "agent" },
+    { id: "smd", label: "Server Machine Dataset (real)", description: "", kind: "agent" },
     { id: "aiops", label: "AIOps KPI (real)", description: "", kind: "viewer" },
   ]);
-  const [dataset, setDataset] = useState<string>("real");
+  const [dataset, setDataset] = useState<string>("smd");
 
   async function analyze(q: string, ds: string = dataset) {
     setLoading(true);
@@ -89,7 +87,7 @@ export default function Home() {
     // Intentional: kick off the initial analysis + dashboard fetches once on mount.
     // eslint-disable-next-line react-hooks/set-state-in-effect
     analyze(question);
-    loadFeatures("real");
+    loadFeatures("smd");
     fetch("/api/datasets")
       .then((r) => r.json())
       .then((d) => d.datasets && setDatasets(d.datasets))
@@ -113,7 +111,7 @@ export default function Home() {
       <div className="header">
         <div>
           <div className="title">
-            Prima<span className="dot">.</span> <span className="muted" style={{ fontSize: 16 }}>Agentic DAU/WAU Intelligence</span>
+            Prima<span className="dot">.</span> <span className="muted" style={{ fontSize: 16 }}>Agentic Server-Health Intelligence</span>
           </div>
         </div>
         <div style={{ display: "flex", gap: 12, alignItems: "center" }}>
@@ -133,8 +131,8 @@ export default function Home() {
         </div>
       </div>
       <div className="subtitle">
-        A LangGraph agent fleet that autonomously writes SQL, detects anomalies, forecasts engagement, and
-        diagnoses root cause — replacing static BI dashboards with prescriptive intelligence.
+        A LangGraph agent fleet that autonomously writes SQL, detects anomalies, forecasts server health, and
+        diagnoses root cause — attributing each anomaly to its metric channels and grading against ground truth.
       </div>
 
       {/* Tabs */}
@@ -164,7 +162,7 @@ export default function Home() {
           value={question}
           onChange={(e) => setQuestion(e.target.value)}
           onKeyDown={(e) => e.key === "Enter" && analyze(question)}
-          placeholder="Ask about DAU / WAU, a region, platform, or feature…"
+          placeholder="Ask about a server entity's health, anomalies, or root cause…"
         />
         <button onClick={() => analyze(question)} disabled={loading}>
           {loading ? <span className="spinner" /> : "Analyze"}
@@ -200,23 +198,23 @@ export default function Home() {
           {/* KPI row */}
           <div className="grid cols-4" style={{ marginBottom: 16 }}>
             <div className="card">
-              <h3>{result.metric} · {label(result.filter)}</h3>
+              <h3>Health score · {label(result.filter)}</h3>
               <div className="kpi">{last?.value.toLocaleString()}</div>
-              <div className="muted" style={{ fontSize: 13 }}>latest day</div>
+              <div className="muted" style={{ fontSize: 13 }}>latest timestep</div>
             </div>
             <div className="card">
-              <h3>14-day forecast</h3>
-              <div className={`kpi ${deltaPct >= 0 ? "delta-up" : "delta-down"}`}>
+              <h3>Forecast outlook</h3>
+              <div className={`kpi ${deltaPct <= 0 ? "delta-up" : "delta-down"}`}>
                 {deltaPct >= 0 ? "▲" : "▼"} {Math.abs(deltaPct).toFixed(1)}%
               </div>
-              <div className="muted" style={{ fontSize: 13 }}>to {proj?.forecast.toLocaleString()}</div>
+              <div className="muted" style={{ fontSize: 13 }}>to score {proj?.forecast.toLocaleString()}</div>
             </div>
             <div className="card">
               <h3>Anomalies</h3>
               <div className="kpi" style={{ color: result.anomalies.length ? "var(--warn)" : "var(--good)" }}>
                 {result.anomalies.length}
               </div>
-              <div className="muted" style={{ fontSize: 13 }}>flagged in window</div>
+              <div className="muted" style={{ fontSize: 13 }}>flagged in series</div>
             </div>
             <div className="card">
               <h3>Run cost / latency</h3>
@@ -232,7 +230,7 @@ export default function Home() {
           {/* Chart + summary */}
           <div className="grid cols-2" style={{ marginBottom: 16, gridTemplateColumns: "1.6fr 1fr" }}>
             <div className="card">
-              <h3>{result.metric} — actual, anomalies & {`{forecast}`}</h3>
+              <h3>Health score — actual, anomalies & {`{forecast}`}</h3>
               <MetricChart
                 series={result.series}
                 anomalies={result.anomalies}
@@ -247,10 +245,17 @@ export default function Home() {
                 <>
                   <h3 style={{ marginTop: 18 }}>Root cause</h3>
                   <div style={{ fontSize: 14, marginBottom: 10 }}>{result.rootCause.headline}</div>
-                  {result.rootCause.suspectedDeploys.length > 0 && (
+                  {result.rootCause.topChannels.length > 0 && (
+                    <div className="muted" style={{ fontSize: 13, marginBottom: 6 }}>
+                      Top deviating channels:{" "}
+                      {result.rootCause.topChannels.map((c) => `${c.channel} (z=${c.deviation})`).join(", ")}
+                    </div>
+                  )}
+                  {result.rootCause.grade && (
                     <div className="muted" style={{ fontSize: 13, marginBottom: 10 }}>
-                      Suspect deploys:{" "}
-                      {result.rootCause.suspectedDeploys.map((d) => `${d.version} (${d.deploy_date})`).join(", ")}
+                      Attribution vs ground truth: precision {(result.rootCause.grade.precision * 100).toFixed(0)}% ·
+                      recall {(result.rootCause.grade.recall * 100).toFixed(0)}%
+                      {result.rootCause.grade.overlap.length > 0 && ` · matched ${result.rootCause.grade.overlap.join(", ")}`}
                     </div>
                   )}
                   <ul className="hyp">
@@ -294,7 +299,7 @@ export default function Home() {
                     </div>
                   ))}
                   <div className="muted" style={{ fontSize: 11, marginTop: 6 }}>
-                    Seasonal-naive z-score with a self-calibrating EVT/POT threshold (SPOT).
+                    Max robust z-score across 38 channels, thresholded by a self-calibrating EVT/POT rule (SPOT).
                   </div>
                 </div>
               )}
@@ -307,7 +312,7 @@ export default function Home() {
       <div className="section-title">Fleet observability</div>
       <div className="grid cols-2">
         <div className="card">
-          <h3>Feature usage — active users (last 30 days)</h3>
+          <h3>Most-implicated metric channels (root-cause frequency)</h3>
           {features.length ? (
             <FeatureUsageChart features={features} />
           ) : (
@@ -369,9 +374,8 @@ export default function Home() {
   );
 }
 
-function label(filter: { region?: string; platform?: string; feature?: string }): string {
-  const p = [filter.region, filter.platform, filter.feature].filter(Boolean);
-  return p.length ? p.join(" · ") : "global";
+function label(filter: { entity?: string }): string {
+  return filter.entity ?? "all entities";
 }
 function scoreColor(pct: number): string {
   if (pct >= 90) return "var(--good)";

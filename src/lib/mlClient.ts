@@ -91,6 +91,8 @@ export async function detectAnomaliesML(
 }
 
 function addDays(date: string, n: number): string {
+  // Integer-timestep series (SMD) advance by index; calendar series by days.
+  if (/^\d+$/.test(date)) return String(Number(date) + n);
   const d = new Date(date + "T00:00:00Z");
   d.setUTCDate(d.getUTCDate() + n);
   return d.toISOString().slice(0, 10);

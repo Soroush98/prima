@@ -49,6 +49,10 @@ export interface LLMResult {
 
 const estTokens = (s: string) => Math.ceil(s.length / 4);
 
+// Opus 4.7+/4.8 and Fable 5 removed sampling params — sending `temperature`
+// returns a 400. Only pass it to models that still accept it (Sonnet 4.6, Haiku).
+const SUPPORTS_TEMPERATURE = !/opus-4-(7|8)|fable/.test(MODEL);
+
 /** Single-shot completion against a live Claude model. */
 export async function callLLM(system: string, user: string): Promise<LLMResult> {
   const start = performance.now();
@@ -56,7 +60,7 @@ export async function callLLM(system: string, user: string): Promise<LLMResult> 
     getClient().messages.create({
       model: MODEL,
       max_tokens: 1024,
-      temperature: 0,
+      ...(SUPPORTS_TEMPERATURE ? { temperature: 0 } : {}),
       system,
       messages: [{ role: "user", content: user }],
     }),
@@ -78,7 +82,8 @@ export async function callLLM(system: string, user: string): Promise<LLMResult> 
 /** Anthropic public per-MTok pricing (USD) for the cost line in the dashboard. */
 const PRICE: Record<string, { in: number; out: number }> = {
   "claude-sonnet-4-6": { in: 3, out: 15 },
-  "claude-opus-4-8": { in: 15, out: 75 },
+  "claude-opus-4-8": { in: 5, out: 25 },
+  "claude-haiku-4-5": { in: 1, out: 5 },
   "claude-haiku-4-5-20251001": { in: 1, out: 5 },
 };
 

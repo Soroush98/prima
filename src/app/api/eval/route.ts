@@ -10,10 +10,10 @@ const REPORT_PATH = path.join(process.cwd(), "data", "eval-report.json");
 /**
  * GET → the LLM evaluation scorecard.
  *
- * Evaluation is intentionally decoupled from the live (real-data) warehouse: the
- * golden set asserts against *injected* ground-truth that only exists in the
- * synthetic dataset. The report ships pre-generated; regenerate it any time with
- * `npm run eval` (which builds the synthetic dataset in isolation).
+ * The golden set runs against an isolated copy of the real SMD warehouse and
+ * asserts on its ground-truth labels (anomaly presence, root-cause attribution
+ * grading). The report ships pre-generated; regenerate any time with
+ * `npm run eval` (which builds the SMD eval warehouse in isolation).
  */
 export async function GET() {
   try {
