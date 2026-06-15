@@ -63,7 +63,10 @@ def zscore_channel(test_vals: np.ndarray) -> np.ndarray:
     valid = ~np.isnan(resid)
     med = np.median(resid[valid]) if valid.any() else 0.0
     mad = np.median(np.abs(resid[valid] - med)) if valid.any() else 0.0
-    sigma = 1.4826 * (mad or 1e-9)
+    # Floor sigma: SMD channels are normalized [0,1] and often piecewise-constant,
+    # so MAD~0; without a floor a tiny move divides by ~0 and z explodes. 0.01 caps
+    # a full-range jump at z≈100. (Matches src/lib/smdWarehouse.ts channelZ.)
+    sigma = max(1.4826 * mad, 0.01)
     out = np.zeros(n)
     out[valid] = np.abs((resid[valid] - med) / sigma)
     return out

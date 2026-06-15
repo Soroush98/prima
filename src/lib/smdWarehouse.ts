@@ -132,8 +132,12 @@ function channelZ(values: number[]): number[] {
   for (let i = 0; i < n; i++) if (!Number.isNaN(expected[i])) resid.push(values[i] - expected[i]);
   if (resid.length === 0) return z;
   const med = median([...resid].sort((a, b) => a - b));
-  const mad = median(resid.map((r) => Math.abs(r - med)).sort((a, b) => a - b)) || 1e-9;
-  const sigma = 1.4826 * mad;
+  const mad = median(resid.map((r) => Math.abs(r - med)).sort((a, b) => a - b));
+  // Floor sigma. SMD channels are normalized [0,1] and many are piecewise-constant,
+  // so MAD is frequently ~0; without a floor a tiny move divides by ~0 and the
+  // z-score explodes into the millions (saturating the health score). 0.01 (=1% of
+  // the [0,1] range) caps a full-range jump at z≈100 and treats sub-1% wiggle as noise.
+  const sigma = Math.max(1.4826 * mad, 0.01);
   for (let i = 0; i < n; i++) if (!Number.isNaN(expected[i])) z[i] = Math.abs((values[i] - expected[i] - med) / sigma);
   return z;
 }

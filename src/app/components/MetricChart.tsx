@@ -23,8 +23,14 @@ interface Props {
 
 export default function MetricChart({ series, anomalies, forecast, metric }: Props) {
   const anomalyByDate = new Map(anomalies.map((a) => [a.date, a]));
-  // show the trailing ~90 days for readability
-  const tail = series.slice(-90);
+  // SMD series are ~24k points, so plot a downsampled view for readability — but
+  // ALWAYS keep flagged anomaly points (and the last point, to anchor the forecast)
+  // so their markers actually render. Short series are shown in full.
+  const MAX_POINTS = 700;
+  const step = Math.max(1, Math.ceil(series.length / MAX_POINTS));
+  const tail = series.filter(
+    (p, i) => i % step === 0 || i === series.length - 1 || anomalyByDate.has(p.date),
+  );
 
   const rows: Record<string, number | string | null>[] = tail.map((p) => ({
     date: p.date,
