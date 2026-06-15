@@ -24,8 +24,13 @@ primary_region = "yyz"
   # cold start serves immediately with no build cost. Set to 1 to avoid cold starts.
   min_machines_running = 0
 
-# No volume: the warehouse is immutable, derived data baked into the image. (If the
-# old `prima_data` volume still exists, it's now unused — `fly volumes destroy` it.)
+# The warehouse is baked into the image (PRIMA_DB_PATH=/app/data/prima.db), so this
+# volume no longer stores data. We keep the mount because the existing machine still
+# has the volume attached — dropping it forces an interactive confirm that CI can't
+# answer. To retire it later: scale the machine down, destroy the volume, remove this.
+[[mounts]]
+  source = "prima_data"
+  destination = "/data"
 
 [[vm]]
   size = "shared-cpu-1x"
