@@ -1,6 +1,10 @@
 """Render dataset figures for the README:
-  docs/synthetic.png — the synthetic Prima benchmark series (large + subtle regimes)
+  docs/synthetic.png — synthetic series behind `npm run bench:detectors` (ensemble study)
+  docs/smd.png       — real SMD server telemetry: raw channels + ground-truth anomaly span
   docs/aiops.png     — representative real AIOps KPIs (clean / Donut-wins / coarse)
+
+Each plot is skipped (with a note) if its dataset isn't present locally, so the
+script runs even when only some datasets are fetched.
 
 Run: ml-service/.venv/bin/python ml-service/plot_datasets.py
 """
@@ -95,6 +99,69 @@ def plot_synthetic():
     print("wrote docs/synthetic.png")
 
 
+def _shade_labeled(ax, label: np.ndarray, lo: int, hi: int) -> None:
+    """Shade contiguous label==1 runs within [lo, hi) as the ground-truth anomaly."""
+    i, first = lo, True
+    while i < hi:
+        if label[i] == 1:
+            j = i
+            while j + 1 < hi and label[j + 1] == 1:
+                j += 1
+            ax.axvspan(i, j, color=RED, alpha=0.18, lw=0, label="labeled anomaly" if first else None)
+            first = False
+            i = j + 1
+        else:
+            i += 1
+
+
+def plot_smd(entity: str = "machine-1-1") -> None:
+    """Real SMD telemetry: a few of the entity's 38 channels around its largest
+    labeled anomaly, with the ground-truth culprit channels (interpretation_label)
+    plotted and the labeled span shaded — the multivariate signal Donut scores
+    per-channel, and the root-cause ground truth the agent is graded against."""
+    base = os.path.join(HERE, "..", "data", "smd")
+    if not os.path.isdir(os.path.join(base, "test")):
+        print("skip docs/smd.png — data/smd absent (see README to fetch the dataset)")
+        return
+    test = np.loadtxt(os.path.join(base, "test", f"{entity}.txt"), delimiter=",")
+    label = np.loadtxt(os.path.join(base, "test_label", f"{entity}.txt"), delimiter=",").astype(int)
+
+    segs: list[tuple[int, int, list[int]]] = []
+    with open(os.path.join(base, "interpretation_label", f"{entity}.txt")) as f:
+        for line in f:
+            line = line.strip()
+            if not line:
+                continue
+            rng, dims = line.split(":")
+            s, e = (int(x) for x in rng.split("-"))
+            chans = [int(x) for x in dims.split(",") if x]
+            segs.append((s, e, chans))
+
+    s, e, chans = max(segs, key=lambda seg: seg[1] - seg[0])  # largest segment
+    lo, hi = max(0, s - 1500), min(len(test), e + 1500)
+    picks = [c - 1 for c in chans[:3]]  # interpretation_label is 1-indexed
+
+    fig, axes = plt.subplots(len(picks), 1, figsize=(11, 6), sharex=True)
+    x = np.arange(lo, hi)
+    for ax, c in zip(axes, picks):
+        ax.plot(x, test[lo:hi, c], color=AX, lw=0.7)
+        _shade_labeled(ax, label, lo, hi)
+        ax.set_title(f"metric_{c + 1:02d} — ground-truth culprit channel", fontsize=9.5, loc="left")
+        ax.set_ylabel("value")
+        ax.legend(loc="upper right", fontsize=8, frameon=False)
+        ax.grid(alpha=0.15)
+    axes[-1].set_xlabel("timestep")
+    fig.suptitle(
+        f"SMD data — {entity}: 3 of 38 channels around its worst anomaly "
+        "(shaded = labeled span; interpretation_label names the culprit channels)",
+        fontsize=11,
+        y=0.995,
+    )
+    fig.tight_layout()
+    fig.savefig(os.path.join(DOCS, "smd.png"), dpi=120)
+    print("wrote docs/smd.png")
+
+
 def load_aiops():
     path = os.path.join(HERE, "..", "data", "aiops-kpi", "preliminary_train.csv")
     series = defaultdict(list)
@@ -107,6 +174,9 @@ def load_aiops():
 
 
 def plot_aiops():
+    if not os.path.exists(os.path.join(HERE, "..", "data", "aiops-kpi", "preliminary_train.csv")):
+        print("skip docs/aiops.png — data/aiops-kpi absent (see README to fetch the dataset)")
+        return
     series = load_aiops()
     # (kpi, caption) — clean→z-score wins, Donut-wins, coarse 5-min→Donut wins
     picks = [
@@ -140,4 +210,5 @@ def plot_aiops():
 
 if __name__ == "__main__":
     plot_synthetic()
+    plot_smd()
     plot_aiops()

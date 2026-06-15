@@ -225,6 +225,42 @@ honest read is to cite both — the paper uses best-F1, which is why we report i
 comparability, but AUC-PR/VUS-PR (Benchmark A) is the stricter, TSB-AD-recommended
 view.
 
+## Benchmark C — real SMD (the dataset the agent actually runs on)
+
+![SMD telemetry: three ground-truth culprit channels of machine-1-1 around its worst anomaly, with the labeled span shaded](docs/smd.png)
+
+Benchmarks A/B justify the *detector choice*. This one benchmarks the **path the web
+app actually ships**: the agent reduces an SMD entity's 38 channels to a 1-D **health
+score** (per-timestep max robust-z across channels, `src/lib/smdWarehouse.ts`) and
+flags anomalies with the same EVT/POT rule. SMD is real server telemetry with two
+kinds of ground truth — per-point `test_label`s *and* `interpretation_label`s naming
+the culprit channels per anomaly (shaded above) — so both detection and root-cause
+attribution are gradeable.
+
+**The shipped path — `npm run bench:smd`** scores that health-score → EVT pipeline
+against `test_label`, macro-averaged over 8 entities (strict, lenient, *and* the
+deployed operating point — never just the flattering one):
+
+| metric | macro | reading |
+|---|---|---|
+| strict point-wise AUC-PR | 0.26 | several× the 2–15% prevalence floor; the raw score ranks loosely |
+| point-adjusted best-F1 (oracle threshold) | **0.97** | the score *separates* anomalies very well given a good cutoff |
+| point-adjusted F1 at the **deployed** EVT threshold | 0.69 | what actually ships |
+
+**Honest finding:** the gap between the oracle (0.97) and the self-calibrating EVT
+threshold (0.69) is real — EVT over-flags on 2 of 8 entities (precision 0.1–0.2,
+recall 1.0). The health *signal* is strong; **per-entity threshold calibration is the
+weak link** and the obvious next step. (A robustness fix also lives here: SMD channels
+are normalized `[0,1]` and often piecewise-constant, so the median/MAD z divided by a
+~0 MAD and exploded into the millions until sigma was floored at 0.01 — see
+`channelZ`.)
+
+**The deep detector on SMD — `ml-service/bench_smd.py`** trains a Donut *per channel*
+on SMD's clean `train` split, scores `test`, max-aggregates, and grades against
+`test_label` (reusing the AIOps metric primitives). A partial smoke (machine-1-1,
+8 channels, 8 epochs) gives z-score best-F1 0.939 vs Donut 0.948 — competitive, as on
+the clean AIOps series; a full per-channel sweep across all entities is a follow-up.
+
 ## Verdict — do we need the ensemble / agreement rule?
 
 Pulling both benchmarks together, the honest answer is **mostly no**, with one narrow
