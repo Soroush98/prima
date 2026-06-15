@@ -62,7 +62,9 @@ jobs:
       # Fail fast with a clear identity error if the token is invalid/expired/mis-scoped,
       # instead of a cryptic "unauthorized" mid-deploy.
       - run: flyctl auth whoami
-      - run: flyctl deploy --remote-only
+      # --yes: auto-confirm non-interactive prompts (e.g. detaching the now-unused
+      # prima_data volume after the warehouse moved into the image).
+      - run: flyctl deploy --remote-only --yes
 
   # ---- ML ensemble (only when ml-service/** changed) ----
   deploy-ml:
@@ -84,5 +86,5 @@ jobs:
       # Fail fast with a clear identity error if the token is invalid/expired/mis-scoped,
       # instead of a cryptic "unauthorized" mid-deploy.
       - run: flyctl auth whoami
-      - run: flyctl deploy --remote-only
+      - run: flyctl deploy --remote-only --yes
         working-directory: ml-service
