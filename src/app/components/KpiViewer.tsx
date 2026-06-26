@@ -120,7 +120,8 @@ export default function KpiViewer() {
         </ResponsiveContainer>
         <div className="muted" style={{ fontSize: 11, marginTop: 6 }}>
           Real 2018 AIOps Challenge KPI · ground-truth anomalies in red · read-only (the DAU/WAU agent
-          doesn&apos;t run on this schema). See <code>ml-service/README.md</code> for the z-score vs Donut benchmark.
+          doesn&apos;t run on this schema). Prima&apos;s deep detector is <b>OmniAnomaly</b> — see
+          <code>ml-service/README.md</code>.
         </div>
       </div>
     </>

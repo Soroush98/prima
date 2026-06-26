@@ -1,21 +1,29 @@
-"""z-score vs Donut benchmark on the real SMD (Server Machine Dataset).
+"""z-score vs OmniAnomaly benchmark on the real SMD (Server Machine Dataset).
 
-SMD ships 28 server entities, each with 38 metric channels, a clean `train`
-split (assumed anomaly-free), a `test` split, and per-point `test_label`s.
-Anomalies are multivariate, so we run a univariate Donut *per channel*, then
-aggregate channel scores into one entity-level anomaly score per timestep and
-grade it against the real labels.
+SMD ships 28 server entities, each with 38 metric channels, a clean `train` split
+(assumed anomaly-free), a `test` split, and per-point `test_label`s. Its anomalies
+are *multivariate* — channels that are individually plausible but jointly
+impossible (a correlation breaking). SMD is the dataset OmniAnomaly was introduced
+on (Su et al., KDD'19), so this is its design regime.
 
-Differences from bench_aiops.py (which this reuses primitives from):
-  * multivariate  -> Donut per channel, max-aggregate standardized scores
-  * real split    -> train Donut on `train/`, score `test/` (no peeking)
-  * no seasonality-> baseline is a causal rolling-median robust z-score
-                     (SMD has no timestamps / daily period to exploit)
+The two detectors graded here:
+  * baseline   — a causal rolling-median robust z-score scored *per channel*, then
+                 max-aggregated. Dependency-free; the honest simple comparison.
+                 It can only see one channel move at a time.
+  * OmniAnomaly— ONE multivariate model over all 38 channels at once, trained on
+                 the clean `train` split and scored on `test` (real split, no
+                 peeking). One model, one score per timestep — it can see
+                 *correlations* break, which the per-channel baseline cannot.
+
+We report a strict metric (point-wise AUC-PR), a lenient one (point-adjusted
+best-F1, the paper's headline), AND the deployed EVT/POT threshold's F1 — never
+just the flattering number. See `metrics.py` for what each means.
 
 Run:  ml-service/.venv/bin/python ml-service/bench_smd.py
 Env:  MACHINES (csv of entity ids, default machine-1-1)
-      EPOCHS (30)  WIN (60)  N (cap test pts, default 0=all)
-      TRAIN_N (cap train pts, default 0=all)  CH_LIMIT (cap channels, 0=all)
+      EPOCHS (10)  WIN (60)  N_Z (16)  N (cap test pts, 0=all)
+      TRAIN_N (cap train pts, 0=all)  CH_LIMIT (cap channels, 0=all)
+      HIDDEN (32)  LATENT (8)  FLOWS (4)  BATCH (64)
 """
 from __future__ import annotations
 
@@ -25,19 +33,23 @@ import time
 import numpy as np
 import torch
 
-from model import DonutVAE
-# reuse the exact metric + Donut primitives the AIOps bench is graded on
-from bench_aiops import auc_pr, best_f1_adjusted, _windows, _glp
+from model import OmniAnomaly, fit, localize, window_scores, windows
+from metrics import auc_pr, best_f1_adjusted, adjusted_f1_at
+from detector import _pot_threshold
 
 torch.manual_seed(42)
 
 SMD_DIR = os.path.join(os.path.dirname(__file__), "..", "data", "smd")
-EPOCHS = int(os.environ.get("EPOCHS", 30))
+EPOCHS = int(os.environ.get("EPOCHS", 10))
 WIN = int(os.environ.get("WIN", 60))
 N = int(os.environ.get("N", 0)) or None              # cap test points
 TRAIN_N = int(os.environ.get("TRAIN_N", 0)) or None  # cap train points
 CH_LIMIT = int(os.environ.get("CH_LIMIT", 0)) or None
-N_Z = 64                                             # MC samples for recon prob
+N_Z = int(os.environ.get("N_Z", 16))                 # MC samples for recon prob
+HIDDEN = int(os.environ.get("HIDDEN", 32))
+LATENT = int(os.environ.get("LATENT", 8))
+FLOWS = int(os.environ.get("FLOWS", 4))
+BATCH = int(os.environ.get("BATCH", 64))
 ROLL = 100                                           # baseline rolling-median window
 
 
@@ -51,10 +63,10 @@ def load_entity(name: str):
     return train, test, label.astype(np.int64)
 
 
-# ---- non-seasonal robust z-score baseline -------------------------------
+# ---- non-seasonal robust z-score baseline (per channel) -----------------
 def zscore_channel(test_vals: np.ndarray) -> np.ndarray:
     """Residual from a causal rolling median, MAD-standardized. No seasonality
-    assumed (SMD has none) — this is the honest simple baseline for it."""
+    assumed (SMD has none) — the honest simple baseline for it."""
     n = len(test_vals)
     expected = np.full(n, np.nan)
     for i in range(ROLL, n):
@@ -72,79 +84,45 @@ def zscore_channel(test_vals: np.ndarray) -> np.ndarray:
     return out
 
 
-# ---- Donut: train on `train`, score `test` ------------------------------
-def donut_channel(train_vals: np.ndarray, test_vals: np.ndarray) -> np.ndarray:
-    """Per-point reconstruction NLL on `test`, with a Donut trained only on the
-    (clean) `train` split. Mirrors bench_aiops.donut_scores but respects the
-    real SMD split instead of training and scoring on one series."""
-    mean, std = float(train_vals.mean()), float(train_vals.std() or 1.0)
-    tr = (train_vals - mean) / std
-    te = (test_vals - mean) / std
-    if len(tr) < 2 * WIN or len(te) < WIN:
-        return np.zeros(len(test_vals))
-
-    latent = min(8, max(3, WIN // 8))
-    model = DonutVAE(window=WIN, hidden=100, latent=latent)
-    x = torch.tensor(_windows(tr, WIN), dtype=torch.float32)
-    opt = torch.optim.Adam(model.parameters(), lr=1e-3)
-    rng = np.random.default_rng(42)
-
-    model.train()
-    nb, bs = x.shape[0], 256
-    for ep in range(EPOCHS):
-        for g in opt.param_groups:                       # paper LR anneal
-            g["lr"] = 1e-3 * (0.75 ** (ep // 10))
-        idx = rng.permutation(nb)
-        for s in range(0, nb, bs):
-            b = x[idx[s : s + bs]]
-            y = (torch.rand_like(b) < 0.01).float()      # missing-data injection
-            alpha = 1.0 - y
-            beta = alpha.mean(dim=-1)
-            x_mean, x_std, z, z_mean, z_std = model(b * alpha)
-            recon = (alpha * _glp(b, x_mean, x_std)).sum(-1)
-            log_pz = (-0.5 * (z ** 2 + float(np.log(2 * np.pi)))).sum(-1)
-            log_qz = _glp(z, z_mean, z_std).sum(-1)
-            loss = -(recon + beta * log_pz - log_qz).mean()
-            opt.zero_grad(); loss.backward(); opt.step()
-
-    # ---- score test windows (batched) ----
-    model.eval()
-    xte = torch.tensor(_windows(te, WIN), dtype=torch.float32)
-    last_lp = np.zeros(xte.shape[0])
-    first_win_lp = None
-    with torch.no_grad():
-        for s in range(0, xte.shape[0], 1024):
-            b = xte[s : s + 1024]
-            z_mean, z_std = model.encode(b)
-            eps = torch.randn(N_Z, *z_mean.shape)
-            zs = z_mean.unsqueeze(0) + z_std.unsqueeze(0) * eps
-            xm, xs_ = model.decode(zs)
-            lp = _glp(b.unsqueeze(0), xm, xs_).mean(0)   # (chunk, W)
-            last_lp[s : s + b.shape[0]] = lp[:, -1].numpy()
-            if s == 0:
-                first_win_lp = lp[0].numpy()
-    n = len(test_vals)
-    nll = np.zeros(n)
-    nll[: WIN - 1] = -first_win_lp[: WIN - 1]
-    for i in range(xte.shape[0]):
-        nll[i + WIN - 1] = -last_lp[i]
-    return nll
-
-
 def _standardize(s: np.ndarray) -> np.ndarray:
-    """Robust per-channel standardization so one noisy channel can't dominate
-    the max-aggregation."""
+    """Robust per-channel standardization so one noisy channel can't dominate the
+    baseline's max-aggregation."""
     med = np.median(s)
     mad = np.median(np.abs(s - med)) or 1e-9
     return (s - med) / (1.4826 * mad)
 
 
+# ---- OmniAnomaly: ONE multivariate model, train on `train`, score `test` ----
+def omni_entity(train: np.ndarray, test: np.ndarray) -> np.ndarray:
+    """Per-timestep anomaly NLL on `test` from a single OmniAnomaly trained on the
+    clean `train` split — all channels jointly. Standardize per channel by *train*
+    statistics so the model sees a zero-mean/unit-scale manifold."""
+    mean = train.mean(0)
+    std = train.std(0)
+    std[std < 1e-9] = 1.0                              # constant channels → flat after norm
+    tr = (train - mean) / std
+    te = (test - mean) / std
+    if len(tr) < 2 * WIN or len(te) < WIN:
+        return np.zeros(len(test))
+
+    d = train.shape[1]
+    latent = min(LATENT, max(3, WIN // 4))
+    model = OmniAnomaly(dim=d, window=WIN, hidden=HIDDEN, latent=latent, n_flows=FLOWS)
+    x = windows(torch.tensor(tr, dtype=torch.float32), WIN)        # (N, W, D)
+    fit(model, x, epochs=EPOCHS, batch=BATCH, seed=42)
+
+    xte = windows(torch.tensor(te, dtype=torch.float32), WIN)      # (M, W, D)
+    last_lp, first_lp = window_scores(model, xte, n_z=N_Z, batch=1024)
+    return localize(last_lp, first_lp, len(test), WIN)
+
+
 def main():
     machines = os.environ.get("MACHINES", "machine-1-1").split(",")
-    print(f"SMD benchmark · per-channel Donut, max-aggregated · W={WIN} · {EPOCHS} epochs")
-    print(f"  best-F1 = point-adjusted (Donut §4.2) · AUC-PR = strict point-wise · baseline = rolling-median z")
-    print(f"{'entity':>14}  {'chans':>5}  {'pts':>6}  {'anom':>6}  {'z-F1':>6}  {'d-F1':>6}  {'z-AUC':>6}  {'d-AUC':>6}  {'t(s)':>5}")
-    zf_all, df_all, z_all, d_all = [], [], [], []
+    print(f"SMD benchmark · OmniAnomaly (multivariate, one model/entity) vs rolling-median z · W={WIN} · {EPOCHS} epochs")
+    print(f"  best-F1 = point-adjusted (lenient/oracle) · AUC-PR = strict point-wise · o-EVT = point-adj F1 at deployed POT cutoff")
+    print(f"{'entity':>14}  {'chans':>5}  {'pts':>6}  {'anom':>6}  "
+          f"{'z-F1':>6}  {'o-F1':>6}  {'z-AUC':>6}  {'o-AUC':>6}  {'o-EVT':>6}  {'t(s)':>5}")
+    zf_all, of_all, za_all, oa_all, oe_all = [], [], [], [], []
     for name in machines:
         name = name.strip()
         train, test, label = load_entity(name)
@@ -152,34 +130,39 @@ def main():
             train = train[:TRAIN_N]
         if N:
             test, label = test[:N], label[:N]
-        chans = range(test.shape[1] if CH_LIMIT is None else min(CH_LIMIT, test.shape[1]))
+        if CH_LIMIT is not None:
+            train, test = train[:, :CH_LIMIT], test[:, :CH_LIMIT]
         if label.sum() == 0:
             print(f"{name:>14}  (no anomalies in test — skipped)")
             continue
+
         t0 = time.perf_counter()
+
+        # baseline: per-channel rolling-median z, max-aggregated over channels
         z_agg = np.full(len(label), -np.inf)
-        d_agg = np.full(len(label), -np.inf)
         used = 0
-        for c in chans:
-            tr_c, te_c = train[:, c], test[:, c]
-            if tr_c.std() < 1e-9:          # constant channel carries no signal
+        for c in range(test.shape[1]):
+            if train[:, c].std() < 1e-9:               # constant channel carries no signal
                 continue
             used += 1
-            z_agg = np.maximum(z_agg, _standardize(zscore_channel(te_c)))
-            d_agg = np.maximum(d_agg, _standardize(donut_channel(tr_c, te_c)))
-        # ignore warm-up region for both detectors
-        warm = WIN - 1
-        ev, zs, ds = label[warm:], z_agg[warm:], d_agg[warm:]
-        zf, df = best_f1_adjusted(zs, ev), best_f1_adjusted(ds, ev)
-        za, da = auc_pr(zs, ev), auc_pr(ds, ev)
-        zf_all.append(zf); df_all.append(df); z_all.append(za); d_all.append(da)
+            z_agg = np.maximum(z_agg, _standardize(zscore_channel(test[:, c])))
+
+        # OmniAnomaly: one multivariate model over all channels at once
+        o = omni_entity(train, test)
+
+        warm = WIN - 1                                 # ignore warm-up for both detectors
+        ev, zs, os_ = label[warm:], z_agg[warm:], o[warm:]
+        zf, of = best_f1_adjusted(zs, ev), best_f1_adjusted(os_, ev)
+        za, oa = auc_pr(zs, ev), auc_pr(os_, ev)
+        oe = adjusted_f1_at(os_, ev, _pot_threshold(os_, 0.90, 0.02))  # deployed EVT/POT cutoff
+        zf_all.append(zf); of_all.append(of); za_all.append(za); oa_all.append(oa); oe_all.append(oe)
         print(f"{name:>14}  {used:>5}  {len(label):>6}  {int(label.sum()):>6}  "
-              f"{zf:>6.3f}  {df:>6.3f}  {za:>6.3f}  {da:>6.3f}  {time.perf_counter()-t0:>5.1f}")
-    if z_all:
-        print("-" * 86)
+              f"{zf:>6.3f}  {of:>6.3f}  {za:>6.3f}  {oa:>6.3f}  {oe:>6.3f}  {time.perf_counter()-t0:>5.1f}")
+    if za_all:
+        print("-" * 92)
         print(f"{'MACRO MEAN':>14}  {'':>5}  {'':>6}  {'':>6}  "
-              f"{np.mean(zf_all):>6.3f}  {np.mean(df_all):>6.3f}  {np.mean(z_all):>6.3f}  "
-              f"{np.mean(d_all):>6.3f}   (n={len(z_all)})")
+              f"{np.mean(zf_all):>6.3f}  {np.mean(of_all):>6.3f}  {np.mean(za_all):>6.3f}  "
+              f"{np.mean(oa_all):>6.3f}  {np.mean(oe_all):>6.3f}   (n={len(za_all)})")
 
 
 if __name__ == "__main__":

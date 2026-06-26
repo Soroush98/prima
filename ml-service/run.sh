@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Start the Donut-VAE anomaly-detection service.
+# Start the OmniAnomaly anomaly-detection service.
 set -euo pipefail
 cd "$(dirname "$0")"
 

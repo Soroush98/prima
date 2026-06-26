@@ -10,7 +10,7 @@ and an LLM evaluation scorecard.
 It runs on **Node 24 + Next.js 16 (App Router) + TypeScript**. The agent graph is built
 with **LangGraph.js**, **Claude** is the reasoning engine, and a **Python / FastAPI +
 PyTorch** service provides zero-shot **Chronos-Bolt** forecasting and a benchmarked
-**Donut VAE** anomaly detector.
+**OmniAnomaly** (KDD'19) multivariate anomaly detector.
 
 > **Live Claude only.** The SQL-Analyst, Root-Cause, and Narrator agents call a real
 > Claude model, so you need an `ANTHROPIC_API_KEY` (`cp .env.example .env`). The
@@ -59,9 +59,9 @@ A full, end-to-end enterprise analytical-agent ecosystem, and where each capabil
 | **Root-cause attribution graded against ground truth** | `root_cause` ranks channels by deviation and scores precision/recall vs `interpretation_label` ([src/agents/nodes.ts](src/agents/nodes.ts)) |
 | **Predictive** analytics | Zero-shot **Chronos-Bolt** forecasting (Holt-Winters fallback) ([ml-service/forecaster.py](ml-service/forecaster.py)) |
 | **LLM performance evaluation** | Golden-set eval on the real SMD warehouse: routing, SQL validity, anomaly recall, root-cause grading, hallucination, latency, cost ([src/eval/](src/eval/)) |
-| **Detector benchmarking** (the benchmark is the justification) | The app's actual detection path scored on real labels ([src/eval/benchmarkSmdDetector.ts](src/eval/benchmarkSmdDetector.ts)); per-channel Donut vs z-score ([ml-service/bench_smd.py](ml-service/bench_smd.py)) |
+| **Detector benchmarking** (the benchmark is the justification) | The app's actual detection path scored on real labels ([src/eval/benchmarkSmdDetector.ts](src/eval/benchmarkSmdDetector.ts)); multivariate OmniAnomaly vs z-score ([ml-service/bench_smd.py](ml-service/bench_smd.py)) |
 | **Statistical modeling** | Robust median/MAD z-scores, EVT/POT thresholding, Holt-Winters ([src/lib/stats.ts](src/lib/stats.ts), [src/lib/evt.ts](src/lib/evt.ts)) |
-| **Deep learning** (PyTorch) | Faithful **Donut** VAE (WWW'18) in a FastAPI microservice ([ml-service/README.md](ml-service/README.md)) |
+| **Deep learning** (PyTorch) | **OmniAnomaly** stochastic-RNN VAE (KDD'19: GRU + planar flows + linear-Gaussian latent transition, multivariate) in a FastAPI microservice ([ml-service/README.md](ml-service/README.md)) |
 | **BigQuery-style SQL** | SQLite warehouse with the same SQL surface (CTEs, window fns, `COUNT DISTINCT`) |
 
 ---
@@ -115,7 +115,7 @@ A **dataset picker** threads the selection per-request to the data layer
 | Dataset | Kind | What it is |
 | --- | --- | --- |
 | **Server Machine Dataset (real)** | agent | The SMD warehouse — the full LangGraph fleet runs against it (default). |
-| **AIOps KPI (real)** | viewer | 2018 AIOps Challenge web-service KPIs with ground-truth labels. A univariate detector showcase — **read-only viewer**, not analyzed by the agent. |
+| **AIOps KPI (real)** | viewer | 2018 AIOps Challenge web-service KPIs with ground-truth labels. A univariate KPI dataset — **read-only viewer**, not analyzed by the agent. |
 
 The registry lives in [src/lib/datasets.ts](src/lib/datasets.ts).
 
@@ -144,7 +144,7 @@ agents call Claude on every request).
 ```bash
 npm run bench:smd        # benchmark Prima's ACTUAL detection path on real SMD labels
 npm run eval             # LLM evaluation scorecard on the SMD warehouse → data/eval-report.json
-npm run bench:detectors  # statistical vs VAE vs ensemble on synthetic series
+npm run bench:detectors  # statistical vs OmniAnomaly vs ensemble on synthetic series
 ```
 
 ---
@@ -155,7 +155,7 @@ There are two distinct benchmarks, because the app and the deep model do differe
 
 ### 1. The app's actual path — `npm run bench:smd`
 
-The agent doesn't score per-channel Donut. It analyzes one 1-D series (the health score)
+The agent doesn't run OmniAnomaly. It analyzes one 1-D series (the health score)
 and thresholds it with EVT/POT. [src/eval/benchmarkSmdDetector.ts](src/eval/benchmarkSmdDetector.ts)
 benchmarks **that exact path** against `test_label`, reporting strict, lenient, *and*
 deployed metrics (per mle-practices — never report only the flattering number):
@@ -174,20 +174,25 @@ should go.
 
 ### 2. The deep detector — `ml-service/bench_smd.py`
 
-A **faithful port of Donut** (Xu et al., WWW'18) — a VAE for seasonal KPIs with the
-paper's three techniques (Gaussian decoder, M-ELBO + missing-data injection, MCMC
-imputation). [ml-service/bench_smd.py](ml-service/bench_smd.py) trains a Donut **per
-channel** on SMD's clean `train` split, scores `test`, max-aggregates across channels,
-and grades against `test_label` — reusing the exact metric primitives from the AIOps
-bench. Both detectors are thresholded with **EVT/POT (SPOT)** ([src/lib/evt.ts](src/lib/evt.ts)),
-which fits a Generalized Pareto Distribution to the score tail for a target false-alarm
-rate (Siffer et al., KDD 2017).
+The deep model is **OmniAnomaly** (Su et al., KDD'19) — a *stochastic-RNN VAE* with its
+signature mechanisms intact (GRU inference/generation, a linear-Gaussian latent
+transition, planar normalizing flows, a Gaussian reconstruction-probability score).
+**One OmniAnomaly model sees all 38 SMD channels at once**, so it scores *correlations
+breaking* — which is what SMD's multivariate anomalies actually are, and what a
+per-channel detector is blind to. [ml-service/bench_smd.py](ml-service/bench_smd.py)
+trains it on SMD's clean `train` split, scores `test`, and grades against `test_label`
+vs a causal rolling-median z-score baseline, thresholding both with **EVT/POT (SPOT)**
+([src/lib/evt.ts](src/lib/evt.ts); Siffer et al., KDD 2017).
 
-It's a benchmark, not the live path: on the AIOps KPI dataset (`ml-service/bench_aiops.py`)
-Donut wins big — point-adjusted best-F1 **0.91 vs 0.54** — because you can't hand-tune one
-seasonal period across 26 heterogeneous KPIs. The deep model earns its keep on many
-high-frequency, heterogeneous signals. Full tables, plots, and the metric caveats (why
-point-adjusted best-F1 ≫ strict AUC-PR) live in **[ml-service/README.md](ml-service/README.md)**.
+It's a benchmark, not the live path — but it's a decisive one in its design regime. On a
+capped 3-entity validation run, OmniAnomaly nearly triples the baseline's strict
+point-wise **AUC-PR (0.33 vs 0.12)** and edges its lenient point-adjusted best-F1 (0.97
+vs 0.89), landing in OmniAnomaly's published SMD range. The flip side, from the synthetic
+benchmark (`npm run bench:detectors`): on Prima's *one clean univariate daily metric*
+OmniAnomaly is **out of its design regime** and the z-score wins outright on subtle
+anomalies (AUC-PR 0.95 vs 0.24) — right tool, right regime. Full tables, plots, and metric
+caveats (why point-adjusted best-F1 ≫ strict AUC-PR) live in
+**[ml-service/README.md](ml-service/README.md)**.
 
 ---
 
@@ -215,7 +220,7 @@ fixture). Results are written to `data/eval-report.json` and shown on the dashbo
 Prima runs on **Fly.io** as two small apps in the same org:
 
 - **`prima-web`**: the Next.js app and agent fleet. It keeps the SQLite warehouse on a 1 GB volume, so the data survives restarts.
-- **`prima-ml`**: the FastAPI + PyTorch service (Chronos-Bolt forecaster + Donut benchmark), reached over Fly's private network at `prima-ml.internal:8000`. If it's down, the `forecaster` drops back to Holt-Winters (anomaly detection is statistical-only and doesn't depend on it).
+- **`prima-ml`**: the FastAPI + PyTorch service (Chronos-Bolt forecaster + OmniAnomaly benchmark), reached over Fly's private network at `prima-ml.internal:8000`. If it's down, the `forecaster` drops back to Holt-Winters (anomaly detection is statistical-only and doesn't depend on it).
 
 The only required secret is `ANTHROPIC_API_KEY`.
 
@@ -235,16 +240,16 @@ Full setup + a GitHub Actions workflow that ships on every push to `main` is in
 
 ```
 ml-service/          Python FastAPI + PyTorch microservice
-  model.py           Donut VAE (faithful WWW'18 port: Gaussian decoder)
-  detector.py        M-ELBO train + reconstruction-probability scoring + EVT/POT (cached)
+  model.py           OmniAnomaly (KDD'19 port: GRU stochastic-RNN VAE + planar flows, multivariate)
+  detector.py        ELBO train + reconstruction-probability scoring + EVT/POT (cached, univariate /detect)
+  metrics.py         AUC-PR + point-adjusted best-F1 + deployed-threshold F1 (bench metrics)
   forecaster.py      zero-shot Chronos-Bolt foundation-model forecasting
   app.py             /detect, /forecast, /health
-  bench_smd.py       per-channel Donut vs rolling-median z on real SMD (train/test split)
-  bench_aiops.py     z-score vs Donut on the real AIOps KPI dataset
+  bench_smd.py       multivariate OmniAnomaly vs rolling-median z on real SMD (train/test split)
   run.sh             `npm run ml`: creates the uv venv and starts uvicorn
 data/
   smd/               Server Machine Dataset (train / test / test_label / interpretation_label)
-  aiops-kpi/         2018 AIOps Challenge KPIs (univariate detector benchmark)
+  aiops-kpi/         2018 AIOps Challenge KPIs (univariate read-only viewer dataset)
 src/
   lib/
     smdWarehouse.ts  builds health / metrics / interp from data/smd; computeHealthSeries
@@ -266,7 +271,7 @@ src/
     evaluate.ts      scoring engine (routing / SQL / recall / root-cause grade / hallucination)
     runEval.ts       CLI scorecard (builds the SMD eval warehouse)
     benchmarkSmdDetector.ts  Prima's actual detection path scored on real SMD labels
-    benchmarkDetectors.ts    statistical vs VAE vs ensemble (synthetic)
+    benchmarkDetectors.ts    statistical vs OmniAnomaly vs ensemble (synthetic)
   app/
     api/             /analyze, /feature-usage, /eval, /datasets, /kpi route handlers
     page.tsx         observability dashboard (Dashboard + Architecture tabs, dataset picker)

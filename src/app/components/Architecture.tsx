@@ -126,7 +126,7 @@ export default function Architecture() {
           <div><b>Determinism boundary</b><span>Numerics (anomaly/forecast/segments) never depend on model output — reproducible regardless of sampling.</span></div>
           <div><b>Observability</b><span>Every super-step appends to <code>trace[]</code> + token/cost reducers → the live execution trace and eval scorecard.</span></div>
           <div><b>Typed state</b><span>One <code>PrimaState</code> schema; nodes are pure functions of it — trivially unit-testable in isolation.</span></div>
-          <div><b>Swappable engines</b><span>LLM, VAE service and forecaster sit behind interfaces; offline fallbacks keep the graph runnable without a network.</span></div>
+          <div><b>Swappable engines</b><span>LLM, OmniAnomaly service and forecaster sit behind interfaces; offline fallbacks keep the graph runnable without a network.</span></div>
         </div>
       </div>
     </div>

@@ -1,12 +1,15 @@
 import type { ForecastPoint, Point } from "@/lib/stats";
 
 /**
- * Client for the Python Donut-VAE anomaly service (ml-service/).
+ * Client for the Python OmniAnomaly anomaly service (ml-service/).
  *
  * The deep-learning detector runs as a separate Python/FastAPI microservice
  * (it owns PyTorch); the agent graph reaches it over HTTP. If the service is
  * not running the call returns null and the graph proceeds with the
  * statistical detector alone — the ML detector augments, never blocks.
+ *
+ * OmniAnomaly is multivariate; this endpoint scores one KPI at a time (D=1).
+ * Its multivariate design regime (SMD) is exercised by ml-service/bench_smd.py.
  */
 
 const ML_URL = process.env.ML_SERVICE_URL || "http://127.0.0.1:8000";
@@ -46,7 +49,7 @@ export interface MlDetectResult {
 
 export async function detectAnomaliesML(
   series: Point[],
-  opts: { model?: "vae"; threshold?: "evt" | "mad"; window?: number; q?: number; epochs?: number } = {},
+  opts: { model?: "omni"; threshold?: "evt" | "mad"; window?: number; q?: number; epochs?: number } = {},
 ): Promise<MlDetectResult | null> {
   try {
     const res = await fetch(`${ML_URL}/detect`, {
@@ -54,7 +57,7 @@ export async function detectAnomaliesML(
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
         series,
-        model: opts.model ?? "vae",
+        model: opts.model ?? "omni",
         threshold: opts.threshold ?? "evt",
         window: opts.window ?? 28, // ~4 weekly cycles — see benchmark window sweep
         q: opts.q ?? 0.02,
@@ -79,7 +82,7 @@ export async function detectAnomaliesML(
       anomalies: data.anomalies,
       scores: data.scores ?? [],
       threshold: data.threshold ?? 0,
-      model: data.model ?? "vae",
+      model: data.model ?? "omni",
       thresholding: data.thresholding ?? "evt",
       trainMs: data.train_ms ?? 0,
       finalLoss: data.final_loss ?? 0,

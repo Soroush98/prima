@@ -1,7 +1,6 @@
 """Render dataset figures for the README:
   docs/synthetic.png — synthetic series behind `npm run bench:detectors` (ensemble study)
   docs/smd.png       — real SMD server telemetry: raw channels + ground-truth anomaly span
-  docs/aiops.png     — representative real AIOps KPIs (clean / Donut-wins / coarse)
 
 Each plot is skipped (with a note) if its dataset isn't present locally, so the
 script runs even when only some datasets are fetched.
@@ -10,10 +9,8 @@ Run: ml-service/.venv/bin/python ml-service/plot_datasets.py
 """
 from __future__ import annotations
 
-import csv
 import math
 import os
-from collections import defaultdict
 
 import matplotlib
 
@@ -117,8 +114,8 @@ def _shade_labeled(ax, label: np.ndarray, lo: int, hi: int) -> None:
 def plot_smd(entity: str = "machine-1-1") -> None:
     """Real SMD telemetry: a few of the entity's 38 channels around its largest
     labeled anomaly, with the ground-truth culprit channels (interpretation_label)
-    plotted and the labeled span shaded — the multivariate signal Donut scores
-    per-channel, and the root-cause ground truth the agent is graded against."""
+    plotted and the labeled span shaded — the multivariate signal OmniAnomaly
+    scores jointly, and the root-cause ground truth the agent is graded against."""
     base = os.path.join(HERE, "..", "data", "smd")
     if not os.path.isdir(os.path.join(base, "test")):
         print("skip docs/smd.png — data/smd absent (see README to fetch the dataset)")
@@ -162,53 +159,6 @@ def plot_smd(entity: str = "machine-1-1") -> None:
     print("wrote docs/smd.png")
 
 
-def load_aiops():
-    path = os.path.join(HERE, "..", "data", "aiops-kpi", "preliminary_train.csv")
-    series = defaultdict(list)
-    with open(path) as f:
-        for d in csv.DictReader(f):
-            series[d["KPI ID"]].append((int(d["timestamp"]), float(d["value"]), int(d["label"])))
-    for k in series:
-        series[k].sort()
-    return series
-
-
-def plot_aiops():
-    if not os.path.exists(os.path.join(HERE, "..", "data", "aiops-kpi", "preliminary_train.csv")):
-        print("skip docs/aiops.png — data/aiops-kpi absent (see README to fetch the dataset)")
-        return
-    series = load_aiops()
-    # (kpi, caption) — clean→z-score wins, Donut-wins, coarse 5-min→Donut wins
-    picks = [
-        ("18fbb1d5a5dc099d", "1-min, sharp spike — z-score ranks far better (AUC-PR 0.69 vs 0.11)"),
-        ("9ee5879409dccef9", "1-min, irregular shape — Donut wins (best-F1 0.97 vs 0.74)"),
-        ("07927a9a18fa19ae", "5-min sampling — Donut wins big (best-F1 0.86 vs 0.14)"),
-    ]
-    fig, axes = plt.subplots(3, 1, figsize=(11, 7))
-    for ax, (kpi, cap) in zip(axes, picks):
-        rows = series[kpi]
-        vals = np.array([r[1] for r in rows])
-        labs = np.array([r[2] for r in rows])
-        anom = np.where(labs == 1)[0]
-        # window around the first anomaly so seasonality + an incident are both visible
-        first = anom[0] if len(anom) else 0
-        lo, hi = max(0, first - 1500), max(0, first - 1500) + 4000
-        x = np.arange(lo, hi)
-        ax.plot(x, vals[lo:hi], color=AX, lw=0.7)
-        seg = anom[(anom >= lo) & (anom < hi)]
-        ax.scatter(seg, vals[seg], color=RED, s=12, zorder=5, label="labeled anomaly")
-        ax.set_title(f"{kpi[:10]}… — {cap}", fontsize=9.5, loc="left")
-        ax.set_ylabel("value")
-        ax.legend(loc="upper right", fontsize=8, frameon=False)
-        ax.grid(alpha=0.15)
-    axes[-1].set_xlabel("sample index")
-    fig.suptitle("Benchmark B data — real AIOps KPIs (heterogeneous: sampling rate & shape vary)", fontsize=11, y=0.995)
-    fig.tight_layout()
-    fig.savefig(os.path.join(DOCS, "aiops.png"), dpi=120)
-    print("wrote docs/aiops.png")
-
-
 if __name__ == "__main__":
     plot_synthetic()
     plot_smd()
-    plot_aiops()

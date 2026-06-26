@@ -1,5 +1,5 @@
 /**
- * Controlled detector benchmark — statistical vs. Donut VAE vs. ensemble.
+ * Controlled detector benchmark — statistical vs. OmniAnomaly vs. ensemble.
  *
  * Generates synthetic DAU series with KNOWN injected anomalies (labels by
  * construction) and scores each detector with the TSB-AD-recommended,
@@ -10,8 +10,10 @@
  *   - **large**  — the screaming anomalies (40–80% deviations) most detectors ace.
  *   - **subtle** — 10–20% deviations, comparable to the weekly seasonal swing, so
  *     a detector must separate anomaly from *seasonality*, not just from noise.
- *     This is where the statistical baseline and the VAE are expected to diverge —
- *     i.e. where an ensemble could actually earn its keep.
+ *     This is where the statistical baseline and the deep detector are expected to
+ *     diverge — i.e. where an ensemble could actually earn its keep. Note: a single
+ *     clean univariate daily series is OUT of OmniAnomaly's multivariate design
+ *     regime; its real evaluation is the SMD benchmark (ml-service/bench_smd.py).
  *
  * Believability: threshold-free AUC-PR/VUS-PR are averaged per-seed (mean ± std),
  * but the operational point metric is **pooled across all seeds** into a single
@@ -32,7 +34,7 @@ import { aucPr, vusPr, pointF1 } from "./metrics";
 const DAYS = 180;
 const SEEDS = 12; // independent realizations to average over
 const TOLERANCE = 1;
-const VAE_WINDOW = Number(process.env.VAE_WINDOW) || 28; // ~4 weekly cycles; Donut uses 120 on long high-freq streams
+const OMNI_WINDOW = Number(process.env.OMNI_WINDOW) || 28; // ~4 weekly cycles; OmniAnomaly uses ~100 on long high-freq streams
 
 /** [startDay, length, factor] — an injected anomaly. */
 type AnomalySpec = [number, number, number];
@@ -169,17 +171,17 @@ const norm = (xs: number[]) => {
 
 async function runScenario(label: string, template: AnomalySpec[]) {
   const accStat = newAcc();
-  const accVae = newAcc();
+  const accOmni = newAcc();
   const accEns = newAcc(); // ensemble mean-score (threshold-free)
 
   const truth = new Set<number>();
   const flStat: number[] = [];
-  const flVae: number[] = [];
+  const flOmni: number[] = [];
   const flUnion: number[] = []; // ≥1 vote (recall-oriented)
   const flInter: number[] = []; // ≥2 votes (precision-oriented)
 
   let contamSum = 0;
-  let vaeRuns = 0;
+  let omniRuns = 0;
   let lastLoss = 0;
   let lastTrainMs = 0;
 
@@ -196,22 +198,22 @@ async function runScenario(label: string, template: AnomalySpec[]) {
     recordScore(accStat, statScores, labels);
     statFlags.forEach((i) => flStat.push(off + i));
 
-    // Donut VAE (skip this seed's VAE/ensemble rows if the service hiccups)
-    const vae = await detectAnomaliesML(series, { model: "vae", threshold: "evt", window: VAE_WINDOW });
-    if (!vae) continue;
-    vaeRuns++;
-    lastLoss = vae.finalLoss;
-    lastTrainMs = vae.trainMs;
-    const vaeFlags = vae.anomalies.map((a) => a.index);
-    recordScore(accVae, vae.scores, labels);
-    vaeFlags.forEach((i) => flVae.push(off + i));
+    // OmniAnomaly (skip this seed's deep/ensemble rows if the service hiccups)
+    const omni = await detectAnomaliesML(series, { model: "omni", threshold: "evt", window: OMNI_WINDOW });
+    if (!omni) continue;
+    omniRuns++;
+    lastLoss = omni.finalLoss;
+    lastTrainMs = omni.trainMs;
+    const omniFlags = omni.anomalies.map((a) => a.index);
+    recordScore(accOmni, omni.scores, labels);
+    omniFlags.forEach((i) => flOmni.push(off + i));
 
     // ensemble — mean of min-max-normalized scores + vote-based flag sets
     const sset = new Set(statFlags);
-    const vset = new Set(vaeFlags);
+    const vset = new Set(omniFlags);
     const votes = (i: number) => (sset.has(i) ? 1 : 0) + (vset.has(i) ? 1 : 0);
     const ns = norm(statScores);
-    const nv = norm(vae.scores);
+    const nv = norm(omni.scores);
     recordScore(accEns, series.map((_, i) => (ns[i] + nv[i]) / 2), labels);
     series.forEach((_, i) => {
       if (votes(i) >= 1) flUnion.push(off + i);
@@ -226,14 +228,14 @@ async function runScenario(label: string, template: AnomalySpec[]) {
   );
   console.log("  " + "─".repeat(82));
   printRow("statistical (EVT)", accStat, flStat, truth);
-  if (vaeRuns) {
-    printRow("donut_vae", accVae, flVae, truth);
+  if (omniRuns) {
+    printRow("omni", accOmni, flOmni, truth);
     printRow("ensemble (mean score)", accEns, null, truth);
     printRow("  └ union (≥1 vote)", null, flUnion, truth);
     printRow("  └ intersect (≥2)", null, flInter, truth);
   }
   console.log("  " + "─".repeat(82));
-  console.log(`  VAE trained on ${vaeRuns}/${SEEDS} seeds · last −ELBO ${lastLoss} (${lastTrainMs}ms)`);
+  console.log(`  OmniAnomaly trained on ${omniRuns}/${SEEDS} seeds · last −ELBO ${lastLoss} (${lastTrainMs}ms)`);
 }
 
 async function main() {

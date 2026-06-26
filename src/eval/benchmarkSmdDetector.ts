@@ -1,7 +1,7 @@
 /**
  * Benchmark of Prima's ACTUAL anomaly-detection path on real SMD labels.
  *
- * The app does not score per-channel Donut directly (that's ml-service/bench_smd.py).
+ * The app does not run OmniAnomaly directly (that's ml-service/bench_smd.py).
  * It analyzes a single 1-D series — the entity *health score* = per-timestep max
  * robust z across the 38 channels (src/lib/smdWarehouse.computeHealthSeries) — and
  * flags anomalies with a self-calibrating EVT/POT threshold
@@ -59,7 +59,7 @@ function segments(labels: number[]): [number, number][] {
 }
 
 /**
- * Point-adjusted best-F1 (Donut paper §4.2): a labeled segment counts fully
+ * Point-adjusted best-F1 (OmniAnomaly paper's point-adjust): a labeled segment counts fully
  * detected if ANY point in it scores above the threshold; points outside
  * segments are scored normally. Sweep segment-max thresholds, take the best F1.
  */

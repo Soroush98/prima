@@ -1,4 +1,4 @@
-# Prima ML ensemble — FastAPI + PyTorch (Donut-VAE) + Chronos-Bolt forecaster.
+# Prima ML service — FastAPI + PyTorch (OmniAnomaly) + Chronos-Bolt forecaster.
 # CPU-only torch keeps the image to a sane size (the GPU wheels are ~2GB larger).
 FROM python:3.12-slim
 

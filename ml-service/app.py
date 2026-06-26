@@ -1,9 +1,13 @@
-"""FastAPI service exposing the Donut-VAE anomaly detector.
+"""FastAPI service exposing the OmniAnomaly detector.
 
 This is a deliberately separate Python microservice (mirroring an edge model
 served behind its own inference API): the Node/LangGraph agent fleet calls it
 over HTTP, so the deep-learning detector composes with the rest of the system
 without coupling languages.
+
+OmniAnomaly is multivariate; this HTTP API takes one KPI at a time and runs it as
+a single-channel series. The full multivariate setting it's built for lives in
+`bench_smd.py`.
 """
 from __future__ import annotations
 
@@ -15,7 +19,7 @@ from pydantic import BaseModel, Field
 from detector import detect
 from forecaster import forecast as tsfm_forecast
 
-app = FastAPI(title="Prima ML Service", version="1.1.0")
+app = FastAPI(title="Prima ML Service", version="2.0.0")
 
 MIN_POINTS = 8  # shortest series the forecaster/detector can do anything useful with
 
@@ -27,16 +31,15 @@ class Point(BaseModel):
 
 class DetectRequest(BaseModel):
     series: list[Point]
-    model: Literal["vae"] = "vae"
+    model: Literal["omni"] = "omni"
     threshold: Literal["evt", "mad"] = "evt"        # "evt" (SPOT/POT) | "mad"
-    window: int = Field(default=28, ge=3, le=60)  # ~4 weekly cycles; Donut uses 120 on long high-freq streams
+    window: int = Field(default=28, ge=3, le=60)  # ~4 weekly cycles; OmniAnomaly uses 100 on long high-freq streams
     epochs: int = Field(default=150, ge=10, le=1000)
     k: float = Field(default=5.0, ge=1.0, le=10.0)
     q: float = Field(default=0.02, ge=1e-5, le=0.2)
-    hidden: int = Field(default=100, ge=4, le=256)   # Donut uses ~100-unit hidden layers
+    hidden: int = Field(default=32, ge=4, le=256)    # GRU hidden width
     latent: int = Field(default=8, ge=2, le=128)     # clamped to <= window//4 in detector
-    n_z: int = Field(default=256, ge=1, le=4096)     # MC z-samples for reconstruction prob (Donut: 1024)
-    mcmc_iter: int = Field(default=10, ge=0, le=50)  # MCMC missing-data imputation iterations
+    n_z: int = Field(default=256, ge=1, le=4096)     # MC z-samples for reconstruction prob
 
 
 class ForecastRequest(BaseModel):
@@ -48,7 +51,7 @@ class ForecastRequest(BaseModel):
 def health() -> dict[str, Any]:
     return {
         "status": "ok",
-        "models": ["vae"],
+        "models": ["omni"],
         "thresholding": ["evt", "mad"],
         "forecaster": "chronos-bolt",
     }
@@ -68,8 +71,7 @@ def detect_endpoint(req: DetectRequest) -> dict[str, Any]:
     dates = [p.date for p in req.series]
     result = detect(
         values, req.window, req.epochs, req.k, req.hidden, req.latent,
-        kind=req.model, threshold=req.threshold, q=req.q,
-        n_z=req.n_z, mcmc_iter=req.mcmc_iter,
+        kind=req.model, threshold=req.threshold, q=req.q, n_z=req.n_z,
     )
     if "error" in result:
         raise HTTPException(status_code=422, detail=result["error"])

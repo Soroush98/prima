@@ -31,7 +31,7 @@ flowchart TB
         DSCTX["datasets.ts + datasetContext.ts<br/>per-request warehouse (AsyncLocalStorage)"]
         DB[("SQLite warehouses<br/>real · synthetic<br/>activity + deploys")]
         STATS["stats.ts<br/>decompose / detect / forecast"]
-        ML["ml-service (FastAPI + PyTorch)<br/>Chronos-Bolt · Donut (benchmark)"]
+        ML["ml-service (FastAPI + PyTorch)<br/>Chronos-Bolt · OmniAnomaly (benchmark)"]
         LLM["llm.ts<br/>Claude (Anthropic SDK)"]
     end
 
@@ -96,7 +96,7 @@ flowchart LR
 |---|---|
 | SQL Analyst | **live Claude** generates SQL → read-only guard → executed (safe template only if the model's SQL is rejected) |
 | Root-Cause / Narrator | **live Claude** writes hypotheses + executive briefing |
-| Anomaly Detector | **statistical-only** — seasonal-naive MAD z-score (Node) with a self-calibrating **EVT/POT (SPOT)** threshold. The **PyTorch Donut-VAE** ([ml-service/](ml-service/)) is kept as a *benchmarked reference*, not in the live path — benchmarks showed the ensemble added nothing on Prima's single clean daily KPI |
+| Anomaly Detector | **statistical-only** — seasonal-naive MAD z-score (Node) with a self-calibrating **EVT/POT (SPOT)** threshold. The **PyTorch OmniAnomaly detector** ([ml-service/](ml-service/)) is kept as a *benchmarked reference*, not in the live path — it's a multivariate model that wins on SMD telemetry (strict AUC-PR ~2.7× the z-score) but is out of its regime on Prima's single clean daily KPI, where the z-score is the right tool |
 | Forecaster | zero-shot **Chronos-Bolt** foundation model (ml-service), **Holt-Winters** fallback when the service is offline |
 | Orchestrator / segments | **deterministic code** (parsing, SQL aggregation) |
 | Cost telemetry | live token usage × model price |
