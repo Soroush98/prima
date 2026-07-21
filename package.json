@@ -20,9 +20,9 @@
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.65.0",
-    "@langchain/anthropic": "^0.3.11",
-    "@langchain/core": "^0.3.40",
-    "@langchain/langgraph": "^0.2.44",
+    "@langchain/anthropic": "^1.5.1",
+    "@langchain/core": "^1.2.3",
+    "@langchain/langgraph": "^1.4.8",
     "better-sqlite3": "^11.8.1",
     "next": "^16.2.7",
     "react": "^19.2.0",
